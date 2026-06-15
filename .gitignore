@@ -1,0 +1,17 @@
+.venv/
+config/settings.toml
+data/*.sqlite3
+data/*.log
+data/*.err.log
+data/*.pid
+data/manual_links.csv
+data/wechat_messages.txt
+data/reports/
+data/hotspots/
+data/xhs_api_doc.png
+data/send_daily_at_2230.sh
+__pycache__/
+*.pyc
+.DS_Store
+*.egg-info/
+*.docx

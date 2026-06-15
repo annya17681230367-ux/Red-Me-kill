@@ -1,0 +1,61 @@
+[agent]
+timezone = "Asia/Shanghai"
+database_path = "data/xhs_agent.sqlite3"
+reports_dir = "data/reports"
+accounts_csv = "config/accounts.csv"
+manual_links_csv = "data/manual_links.csv"
+knowledge_file = "knowledge/xhs_strategy.md"
+
+[schedule]
+daily_report_time = "13:00"
+weekly_report_day = "wed"
+weekly_report_time = "15:00"
+
+[feishu]
+app_id = ""
+app_secret = ""
+chat_name = "学管部小红书发帖群"
+chat_id = ""
+message_lookback_hours = 30
+
+[wechat_input]
+enabled = true
+transcript_path = "data/wechat_messages.txt"
+
+[wecom]
+enabled = false
+webhook_url = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"
+bot_profile_url = ""
+
+[wechat_official_account]
+enabled = false
+app_id = ""
+app_secret = ""
+openids = []
+
+[llm]
+enabled = false
+provider = "deepseek"
+base_url = "https://api.deepseek.com"
+ollama_base_url = "http://localhost:11434"
+anthropic_base_url = "https://api.deepseek.com/anthropic"
+api_key = ""
+model = "deepseek-v4-flash"
+timeout_seconds = 45
+max_tokens = 900
+temperature = 0.3
+
+[xhs_api]
+base_url = "https://ark.xiaohongshu.com/ark/open_api/v3/common_controller"
+api_key = ""
+app_id = "xiaohongshu-cli"
+version = "v3"
+note_method = ""
+account_method = ""
+auth_mode = "ark_common_controller"
+timeout_seconds = 30
+
+[report]
+primary_goals = ["私信", "互动", "涨粉"]
+send_to_feishu = true
+include_html = true
