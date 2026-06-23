@@ -1,4 +1,5 @@
 .venv/
+.env
 config/settings.toml
 data/*.sqlite3
 data/*.log

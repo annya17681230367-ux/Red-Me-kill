@@ -139,6 +139,16 @@ scripts/xhs-agent.sh weekly --dry-run
 scripts/xhs-agent.sh run
 ```
 
+## 云服务器部署
+
+阿里云/腾讯云 Ubuntu 服务器可以按这份文档部署：
+
+```text
+docs/cloud-deployment.md
+```
+
+云端第一版使用 Docker Compose，主分析模型使用 DeepSeek `deepseek-v4-flash`，并记录 token 用量和预估费用。API Key 放在服务器私有配置或 `.env`，不提交 GitHub。
+
 如果要部署成 macOS 后台任务：
 
 ```bash

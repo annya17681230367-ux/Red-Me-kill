@@ -25,8 +25,14 @@ def run_scheduler(settings: Settings) -> None:
     def daily_job() -> None:
         report_day = datetime.now().date() - timedelta(days=1)
         _sync_all(repo, settings)
-        collect_notes_with_chrome(repo, report_date=report_day)
-        collect_daily_hotspots(report_day)
+        if settings.agent.browser_collection_enabled:
+            collect_notes_with_chrome(repo, report_date=report_day)
+        else:
+            print("浏览器采集已关闭，跳过 Chrome 采集。")
+        if settings.agent.hotspot_collection_enabled:
+            collect_daily_hotspots(report_day)
+        else:
+            print("热点采集已关闭，跳过 Chrome 搜索采集。")
         result = _build_report(repo, settings, "daily", report_day.isoformat())
         deliver_report(settings, result)
 

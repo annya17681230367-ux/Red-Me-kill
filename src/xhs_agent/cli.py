@@ -97,10 +97,15 @@ def main() -> None:
     if args.command in {"daily", "weekly"}:
         report_day = _report_day(args)
         _sync_all(repo, settings)
-        if args.command == "daily":
+        if args.command == "daily" and settings.agent.browser_collection_enabled:
             collected = collect_notes_with_chrome(repo, args.wait, args.limit, args.refresh_all, report_day)
             print(f"浏览器采集完成：写入 {collected} 条笔记数据")
+        elif args.command == "daily":
+            print("浏览器采集已关闭，跳过 Chrome 采集。")
+        if args.command == "daily" and settings.agent.hotspot_collection_enabled:
             collect_daily_hotspots(report_day)
+        elif args.command == "daily":
+            print("热点采集已关闭，跳过 Chrome 搜索采集。")
         result = _build_report(repo, settings, args.command, report_day.isoformat())
         deliver_report(settings, result, args.dry_run or not args.send)
         print(result.markdown_path.resolve())

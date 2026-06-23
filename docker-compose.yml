@@ -1,0 +1,11 @@
+services:
+  xhs-agent:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./config/settings.toml:/app/config/settings.toml:ro
+      - ./config/accounts.csv:/app/config/accounts.csv:ro
+      - ./data:/app/data
+    command: ["python", "-m", "xhs_agent", "run"]

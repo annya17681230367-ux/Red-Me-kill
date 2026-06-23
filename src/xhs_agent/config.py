@@ -24,6 +24,8 @@ class AgentSettings(BaseModel):
     accounts_csv: str = "config/accounts.csv"
     manual_links_csv: str = "data/manual_links.csv"
     knowledge_file: str = "knowledge/xhs_strategy.md"
+    browser_collection_enabled: bool = True
+    hotspot_collection_enabled: bool = True
 
 
 class WeChatInputSettings(BaseModel):

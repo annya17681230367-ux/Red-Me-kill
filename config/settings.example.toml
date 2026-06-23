@@ -5,6 +5,8 @@ reports_dir = "data/reports"
 accounts_csv = "config/accounts.csv"
 manual_links_csv = "data/manual_links.csv"
 knowledge_file = "knowledge/xhs_strategy.md"
+browser_collection_enabled = true
+hotspot_collection_enabled = true
 
 [schedule]
 daily_report_time = "13:00"
