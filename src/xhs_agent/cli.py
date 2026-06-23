@@ -196,6 +196,7 @@ def _test_model(repo: Repository, settings) -> None:
         raise
     usage = client.last_usage
     if usage:
+        status = "failed" if enriched.llm_provider == "rules" else "succeeded"
         repo.add_model_call_log(
             task_type="model-test",
             provider=str(usage.get("provider") or settings.llm.provider),
@@ -204,7 +205,8 @@ def _test_model(repo: Repository, settings) -> None:
             output_tokens=int(usage.get("output_tokens") or 0),
             total_tokens=int(usage.get("total_tokens") or 0),
             estimated_cost_usd=client.estimated_last_cost_usd(),
-            status="succeeded",
+            status=status,
+            error=enriched.llm_summary if status == "failed" else "",
         )
     else:
         repo.add_model_call_log(

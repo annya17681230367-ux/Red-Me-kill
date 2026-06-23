@@ -227,7 +227,7 @@ anthropic_base_url = "https://api.anthropic.com"
 api_key = "Anthropic API Key"
 model = "claude-3-5-sonnet-latest"
 timeout_seconds = 45
-max_tokens = 900
+max_tokens = 1600
 temperature = 0.3
 ```
 
@@ -243,7 +243,7 @@ base_url = "https://api.deepseek.com"
 api_key = "DeepSeek API Key"
 model = "deepseek-v4-flash"
 timeout_seconds = 45
-max_tokens = 900
+max_tokens = 1600
 temperature = 0.3
 input_token_usd_per_million = 0.14
 output_token_usd_per_million = 0.28

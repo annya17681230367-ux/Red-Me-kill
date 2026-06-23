@@ -40,21 +40,24 @@ class DeepSeekClient:
             return self._call_ollama(note, base)
         if self.settings.provider in {"anthropic", "claude"}:
             return self._call_anthropic(note, base)
+        request_body = {
+            "model": self.settings.model,
+            "temperature": self.settings.temperature,
+            "max_tokens": self.settings.max_tokens,
+            "messages": [
+                {"role": "system", "content": self._system_prompt()},
+                {"role": "user", "content": self._user_prompt(note, base)},
+            ],
+        }
+        if self.settings.provider in {"deepseek", "openai", "openai_compatible"}:
+            request_body["response_format"] = {"type": "json_object"}
         response = httpx.post(
             f"{self.settings.base_url.rstrip('/')}/chat/completions",
             headers={
                 "Authorization": f"Bearer {self.settings.api_key}",
                 "Content-Type": "application/json",
             },
-            json={
-                "model": self.settings.model,
-                "temperature": self.settings.temperature,
-                "max_tokens": self.settings.max_tokens,
-                "messages": [
-                    {"role": "system", "content": self._system_prompt()},
-                    {"role": "user", "content": self._user_prompt(note, base)},
-                ],
-            },
+            json=request_body,
             timeout=self.settings.timeout_seconds,
         )
         response.raise_for_status()
@@ -157,7 +160,7 @@ class DeepSeekClient:
     def _system_prompt(self) -> str:
         return (
             "你是小红书运营分析 Agent，目标是帮助教育/升学类账号提升私信、互动和涨粉。"
-            "输出必须具体、可执行，避免空泛建议。只返回 JSON，不要 Markdown。"
+            "输出必须具体、可执行，避免空泛建议。只返回合法 JSON 对象，不要 Markdown，不要代码块，不要额外解释。"
         )
 
     def _user_prompt(self, note: NoteMetrics, base: NoteAnalysis) -> str:

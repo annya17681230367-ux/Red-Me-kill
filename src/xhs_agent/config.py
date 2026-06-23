@@ -67,7 +67,7 @@ class LlmSettings(BaseModel):
     api_key: str = ""
     model: str = "deepseek-v4-flash"
     timeout_seconds: int = 45
-    max_tokens: int = 900
+    max_tokens: int = 1600
     temperature: float = 0.3
     input_token_usd_per_million: float = 0.14
     output_token_usd_per_million: float = 0.28
