@@ -63,7 +63,7 @@ def collect_one_note(url: str, wait_seconds: float = 5.0) -> NoteMetrics:
     return NoteMetrics(
         note_id=_note_id_from_url(final_url or url),
         url=url,
-        account_id=None,
+        account_id=_extract_author(body),
         title=title or "待抓取标题",
         body=body[:2500] or "页面未读取到正文。",
         published_at=_extract_published_at(body),
@@ -129,6 +129,14 @@ def _title_from_body(body: str) -> str:
         if 4 <= len(line) <= 80 and not re.search(r"^(赞|收藏|评论|分享|关注)$", line):
             return line
     return ""
+
+
+def _extract_author(body: str) -> str | None:
+    for line in body.splitlines():
+        line = line.strip()
+        if line and line not in {"关注", "赞", "收藏", "评论", "分享"}:
+            return line[:80]
+    return None
 
 
 def _looks_login_or_blocked(body: str) -> bool:

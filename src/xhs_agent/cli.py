@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .analysis import XhsAnalyzer
 from .config import load_accounts, load_manual_links, load_settings, load_wechat_transcript_links
+from .image_generation import run_image_generation_node
 from .llm import DeepSeekClient
 from .messaging import deliver_report
 from .repository import Repository
@@ -31,6 +32,7 @@ def main() -> None:
             "wechat-watch-clipboard",
             "xhs-browser-login",
             "xhs-browser-collect",
+            "generate-images",
         ],
     )
     parser.add_argument("--config", default="config/settings.toml")
@@ -74,6 +76,16 @@ def main() -> None:
     if args.command == "xhs-browser-collect":
         collected = collect_notes_with_chrome(repo, args.wait, args.limit, args.refresh_all)
         print(f"浏览器采集完成：写入 {collected} 条笔记数据")
+        return
+
+    if args.command == "generate-images":
+        result = run_image_generation_node(repo, settings.image_generation, args.limit)
+        print(
+            "图片节点完成："
+            f"新增任务 {result.created_jobs} 个，"
+            f"生成成功 {result.completed_jobs} 个，"
+            f"失败 {result.failed_jobs} 个"
+        )
         return
 
     if args.command in {"daily", "weekly"}:

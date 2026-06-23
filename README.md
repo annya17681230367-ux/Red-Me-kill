@@ -217,6 +217,34 @@ model = "deepseek-r1:7b"
 
 本地模型不需要 DeepSeek API 余额，但需要本机持续运行 Ollama。
 
+## AI 图片生成节点
+
+系统已预留“爆贴分析后继续生成封面图”的节点。先在 `config/settings.toml` 中配置：
+
+```toml
+[image_generation]
+enabled = true
+provider = "openai_compatible"
+base_url = "图片生成 API 地址"
+api_key = "图片生成 API Key"
+model = "图片生成模型"
+output_dir = "data/generated_images"
+timeout_seconds = 90
+```
+
+运行：
+
+```bash
+scripts/xhs-agent.sh generate-images --limit 3
+```
+
+这个节点会读取高互动笔记，为三个业务号生成封面图任务，并写入数据库：
+
+- `image_jobs`：图片生成任务、状态、错误原因。
+- `generated_images`：生成后的图片链接或本地图片路径。
+
+如果图片 API 还没有配置，系统会先保留待执行任务，方便后续接通 API 后继续生成。
+
 ## 小红书浏览器采集
 
 如果小红书 API 没有 `note_method/account_method`，可以用 Chrome 登录态兜底采集标题、正文和可见互动数据。

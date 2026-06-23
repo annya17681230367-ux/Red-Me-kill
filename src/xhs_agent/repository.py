@@ -83,6 +83,33 @@ class Repository:
               leads integer not null default 0,
               primary key (account_id, captured_at)
             );
+
+            create table if not exists image_jobs (
+              job_id integer primary key autoincrement,
+              note_id text not null,
+              target_account text not null,
+              prompt text not null,
+              status text not null default 'pending',
+              provider text,
+              model text,
+              error text,
+              created_at text not null,
+              updated_at text not null
+            );
+
+            create table if not exists generated_images (
+              image_id integer primary key autoincrement,
+              job_id integer not null,
+              note_id text not null,
+              target_account text not null,
+              prompt text not null,
+              image_url text,
+              image_path text,
+              created_at text not null
+            );
+
+            create index if not exists idx_image_jobs_status
+              on image_jobs(status, created_at);
             """
         )
         self.conn.commit()
@@ -266,6 +293,82 @@ class Repository:
                 )
                 for s in snapshots
             ],
+        )
+        self.conn.commit()
+
+    def add_image_job(self, note_id: str, target_account: str, prompt: str) -> int:
+        now = datetime.now(timezone.utc).isoformat()
+        cursor = self.conn.execute(
+            """
+            insert into image_jobs(note_id, target_account, prompt, created_at, updated_at)
+            values (?, ?, ?, ?, ?)
+            """,
+            (note_id, target_account, prompt, now, now),
+        )
+        self.conn.commit()
+        return int(cursor.lastrowid)
+
+    def pending_image_jobs(self, limit: int | None = None) -> list[sqlite3.Row]:
+        sql = """
+            select *
+            from image_jobs
+            where status = 'pending'
+            order by created_at asc
+        """
+        params: tuple = ()
+        if limit:
+            sql += " limit ?"
+            params = (limit,)
+        return self.conn.execute(sql, params).fetchall()
+
+    def mark_image_job_running(self, job_id: int, provider: str, model: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        self.conn.execute(
+            """
+            update image_jobs
+            set status = 'running', provider = ?, model = ?, error = null, updated_at = ?
+            where job_id = ?
+            """,
+            (provider, model, now, job_id),
+        )
+        self.conn.commit()
+
+    def mark_image_job_failed(self, job_id: int, error: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        self.conn.execute(
+            """
+            update image_jobs
+            set status = 'failed', error = ?, updated_at = ?
+            where job_id = ?
+            """,
+            (error[:1000], now, job_id),
+        )
+        self.conn.commit()
+
+    def add_generated_image(
+        self,
+        job_id: int,
+        note_id: str,
+        target_account: str,
+        prompt: str,
+        image_url: str = "",
+        image_path: str = "",
+    ) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        self.conn.execute(
+            """
+            insert into generated_images(job_id, note_id, target_account, prompt, image_url, image_path, created_at)
+            values (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (job_id, note_id, target_account, prompt, image_url, image_path, now),
+        )
+        self.conn.execute(
+            """
+            update image_jobs
+            set status = 'completed', updated_at = ?
+            where job_id = ?
+            """,
+            (now, job_id),
         )
         self.conn.commit()
 

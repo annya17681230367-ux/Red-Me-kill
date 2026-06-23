@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
+import re
 
 import markdown
 from reportlab.lib import colors
@@ -60,6 +61,7 @@ class ReportBuilder:
                 (start, end),
             )
         )
+        hotspots = load_daily_hotspots(day)
         md = [
             f"# 小红书账号日报 {day.isoformat()}",
             "",
@@ -73,8 +75,10 @@ class ReportBuilder:
         ]
         md.extend(_viral_section(notes, "今日"))
         md.extend(_viral_analysis_section(notes))
+        md.extend(_content_score_section(notes, self.analyzer))
         md.extend(_monthly_marketing_section(day))
-        md.extend(_hotspot_section(load_daily_hotspots(day)))
+        md.extend(_hotspot_section(hotspots))
+        md.extend(_must_write_section(notes, hotspots))
         md.extend(
             [
                 "",
@@ -131,8 +135,11 @@ class ReportBuilder:
             """,
             (start, end),
         )
+        hotspots = _load_weekly_hotspots(start_day, day)
         md = [
             f"# 小红书账号周报 {start_day.isoformat()} 至 {day.isoformat()}",
+            "",
+            "## 本周关键看板",
             "",
             f"- 本周收录笔记：{len(notes)} 条",
             f"- 本周总互动：{sum(r['likes'] + r['collects'] + r['comments'] + r['shares'] for r in notes)}",
@@ -141,10 +148,24 @@ class ReportBuilder:
             "## 本周爆贴数据",
         ]
         md.extend(_viral_section(notes, "本周"))
+        md.extend(_weekly_viral_analysis_table(notes, self.analyzer))
+        md.extend(_monthly_marketing_section(day))
+        md.extend(_weekly_hotspot_section(hotspots))
+        md.extend(_weekly_content_plan_section(notes, hotspots))
+        md.extend(
+            [
+                "",
+                "## 按账号/作者汇总",
+                "",
+            ]
+        )
+        md.extend(_weekly_author_section(notes))
         md.extend(
             [
                 "",
             "## 账号数据变化",
+            "",
+            _account_snapshot_note(accounts),
             "",
             "|账号|运营|赛道|粉丝变化|发帖变化|私信/线索变化|建议|",
             "|---|---|---|---:|---:|---:|---|",
@@ -248,6 +269,66 @@ def _note_section(row, analysis) -> list[str]:
     ]
 
 
+def _weekly_author_section(notes) -> list[str]:
+    if not notes:
+        return ["本周暂无可汇总的账号/作者数据。"]
+    groups = {}
+    for row in notes:
+        author = row["account_id"] or _author_from_body(row["body"] or "") or "未识别账号"
+        item = groups.setdefault(
+            author,
+            {"notes": 0, "likes": 0, "collects": 0, "comments": 0, "shares": 0, "leads": 0, "top": None},
+        )
+        item["notes"] += 1
+        item["likes"] += row["likes"]
+        item["collects"] += row["collects"]
+        item["comments"] += row["comments"]
+        item["shares"] += row["shares"]
+        item["leads"] += row["leads"]
+        if item["top"] is None or _viral_score(row) > _viral_score(item["top"]):
+            item["top"] = row
+    lines = [
+        "|账号/作者|笔记数|总互动|点赞|收藏|评论|分享|私信线索|最高分笔记|",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---|",
+    ]
+    ranked = sorted(
+        groups.items(),
+        key=lambda pair: (
+            pair[1]["likes"] + pair[1]["collects"] + pair[1]["comments"] + pair[1]["shares"] + pair[1]["leads"],
+            pair[1]["notes"],
+        ),
+        reverse=True,
+    )
+    for author, item in ranked[:20]:
+        top = item["top"]
+        top_title = _markdown_link(_table_cell(top["title"] or "未命名笔记", 24), top["url"]) if top else "-"
+        total = item["likes"] + item["collects"] + item["comments"] + item["shares"] + item["leads"]
+        lines.append(
+            f"|{_table_cell(author, 18)}|{item['notes']}|{total}|{item['likes']}|{item['collects']}|{item['comments']}|{item['shares']}|{item['leads']}|{top_title}|"
+        )
+    return lines
+
+
+def _author_from_body(body: str) -> str:
+    for line in body.splitlines():
+        line = line.strip()
+        if line and line not in {"关注", "赞", "收藏", "评论", "分享"}:
+            return line[:80]
+    return ""
+
+
+def _account_snapshot_note(accounts) -> str:
+    if not accounts:
+        return "账号快照表为空；请补充 `config/accounts.csv` 或配置小红书账号 API 后再看粉丝变化。"
+    has_real_snapshot = any(
+        (row["followers_start"] or row["followers_end"] or row["notes_start"] or row["notes_end"])
+        for row in accounts
+    )
+    if not has_real_snapshot:
+        return "当前账号快照仍为 0 或示例数据；下表不代表真实粉丝/发帖变化，真实账号表现请以上方“按账号/作者汇总”为准。"
+    return "以下为 `config/accounts.csv` 中账号的快照变化。"
+
+
 def _daily_strategy_table(notes, analyzer: XhsAnalyzer) -> list[str]:
     if not notes:
         return []
@@ -264,6 +345,32 @@ def _daily_strategy_table(notes, analyzer: XhsAnalyzer) -> list[str]:
         strategy = _table_cell(_join_limited(analysis.actions, 2), 58)
         next_step = _table_cell(analysis.next_step, 34)
         lines.append(f"|{title}|{data}|{issue}|{strategy}|{next_step}|")
+    return lines
+
+
+def _content_score_section(notes, analyzer: XhsAnalyzer) -> list[str]:
+    lines = [
+        "",
+        "## 今日内容评分与爆款结构抽象",
+        "",
+    ]
+    if not notes:
+        lines.append("今日暂无可评分笔记。")
+        return lines
+    lines.extend(
+        [
+            "|笔记|内容评分|爆款标题公式|内容结构拆解|可复用模板|",
+            "|---|---:|---|---|---|",
+        ]
+    )
+    ranked = sorted(notes, key=_viral_score, reverse=True)[:5]
+    for row in ranked:
+        analysis = analyzer.analyze_note(_row_to_note(row))
+        title = _table_cell(row["title"] or "未命名笔记", 22)
+        formula = _table_cell(_title_formula_from_row(row), 36)
+        structure = _table_cell(_structure_abstract(row), 44)
+        template = _table_cell(_reuse_template(row), 44)
+        lines.append(f"|{title}|{analysis.total_score}/10|{formula}|{structure}|{template}|")
     return lines
 
 
@@ -302,6 +409,44 @@ def _viral_analysis_section(notes) -> list[str]:
         action = _viral_reuse_action(row)
         lines.append(f"- **{title}**：{reason}。复刻方向：{action}")
     return lines
+
+
+def _weekly_viral_analysis_table(notes, analyzer: XhsAnalyzer) -> list[str]:
+    lines = [
+        "",
+        "## 本周爆贴共性分析",
+        "",
+    ]
+    if not notes:
+        lines.append("本周暂无可分析爆贴内容。")
+        return lines
+    lines.extend(
+        [
+            "|爆贴|内容类型|核心钩子|互动信号|可复用结构|下周复制动作|",
+            "|---|---|---|---|---|---|",
+        ]
+    )
+    for row in sorted(notes, key=_viral_score, reverse=True)[:6]:
+        analysis = analyzer.analyze_note(_row_to_note(row))
+        title = _markdown_link(_table_cell(row["title"] or "未命名笔记", 20), row["url"])
+        signal = _weekly_signal(row)
+        lines.append(
+            f"|{title}|{analysis.content_type}|{_table_cell(_title_formula_from_row(row), 24)}|{signal}|{_table_cell(_structure_abstract(row), 30)}|{_table_cell(_viral_reuse_action(row), 30)}|"
+        )
+    return lines
+
+
+def _weekly_signal(row) -> str:
+    parts = []
+    if row["likes"]:
+        parts.append(f"赞{row['likes']}")
+    if row["collects"]:
+        parts.append(f"藏{row['collects']}")
+    if row["comments"]:
+        parts.append(f"评{row['comments']}")
+    if row["shares"]:
+        parts.append(f"转{row['shares']}")
+    return " / ".join(parts) if parts else "弱互动"
 
 
 def _monthly_marketing_section(report_date: date) -> list[str]:
@@ -351,7 +496,7 @@ def _monthly_marketing_section(report_date: date) -> list[str]:
         "",
         "## 当月营销热点",
         "",
-        "|地区|本月课业痛点|日报选题方向|可承接产品|",
+        "|地区|本月课业痛点|选题方向|可承接产品|",
         "|---|---|---|---|",
     ]
     for region, pain, topic, product in rows:
@@ -359,6 +504,95 @@ def _monthly_marketing_section(report_date: date) -> list[str]:
             f"|{region}|{_table_cell(pain, 44)}|{_table_cell(topic, 46)}|{_table_cell(product, 30)}|"
         )
     return lines
+
+
+def _load_weekly_hotspots(start_day: date, end_day: date) -> list[dict]:
+    items = []
+    current = start_day
+    while current <= end_day:
+        for item in load_daily_hotspots(current):
+            copied = dict(item)
+            copied["date"] = current.isoformat()
+            items.append(copied)
+        current += timedelta(days=1)
+    deduped = {}
+    for item in items:
+        title = item.get("title") or ""
+        if not title:
+            continue
+        current_item = deduped.get(title)
+        if current_item is None or int(item.get("likes") or 0) > int(current_item.get("likes") or 0):
+            deduped[title] = item
+    return sorted(deduped.values(), key=lambda item: int(item.get("likes") or 0), reverse=True)
+
+
+def _weekly_hotspot_section(items: list[dict]) -> list[str]:
+    lines = [
+        "",
+        "## 本周营销热点与爆款借鉴",
+        "",
+        "热点来源：最近 7 天已采集的小红书搜索结果，按点赞量去重排序。用于判断下周选题方向，不等同于本账号自然流量。",
+    ]
+    if not items:
+        lines.append("")
+        lines.append("本周没有可复用的搜索热点数据。建议先运行每日热点采集后再生成周报。")
+        return lines
+    lines.extend(
+        [
+            "",
+            "|优先级|热点方向|代表爆贴|点赞|爆点判断|适合怎么跟|",
+            "|---:|---|---|---:|---|---|",
+        ]
+    )
+    for index, item in enumerate(items[:8], start=1):
+        title = _markdown_link(_table_cell(item.get("title") or "未命名热点", 28), item.get("url") or "")
+        keyword = _table_cell(item.get("keyword") or "-", 18)
+        reason = _table_cell(item.get("reason") or "可作为当月选题参考。", 34)
+        action = _table_cell(_hotspot_follow_action(item), 34)
+        lines.append(f"|{index}|{keyword}|{title}|{int(item.get('likes') or 0)}|{reason}|{action}|")
+    return lines
+
+
+def _hotspot_follow_action(item: dict) -> str:
+    text = (item.get("keyword") or "") + (item.get("title") or "") + (item.get("reason") or "")
+    topic = _topic_from_text(text)
+    if "毕业论文" in topic:
+        return "做论文进度自测、导师沟通话术、伦理表材料清单"
+    if "挂科" in topic:
+        return "做出分后48小时补救、申诉材料、S2选课避坑"
+    if "暑课" in topic or "考试" in topic:
+        return "做暑课节奏表、考试周优先级、短学期避坑"
+    if "查重" in topic:
+        return "做Turnitin翻车案例、降AI前后对比、改写清单"
+    return "保留真实情绪钩子，加入具体学校/课程/DDL场景"
+
+
+def _weekly_content_plan_section(notes, hotspots: list[dict]) -> list[str]:
+    lines = [
+        "",
+        "## 下周选题排期建议",
+        "",
+        "|优先级|选题方向|为什么现在写|推荐标题角度|承接动作|",
+        "|---:|---|---|---|---|",
+    ]
+    topics = _recommended_topics(notes, hotspots)
+    for index, topic in enumerate(topics[:5], start=1):
+        lines.append(
+            f"|{index}|{topic}|{_table_cell(_topic_reason(topic), 28)}|{_table_cell(_must_write_title(topic), 32)}|评论区问学校/课程/DDL，筛出明确需求后私信承接。|"
+        )
+    return lines
+
+
+def _topic_reason(topic: str) -> str:
+    if "毕业论文" in topic:
+        return "6月英硕论文、Proposal、导师沟通需求集中"
+    if "挂科" in topic:
+        return "澳洲S1出分后补救和申诉焦虑高"
+    if "暑课" in topic or "考试" in topic:
+        return "暑课节奏短，考试和作业撞车明显"
+    if "查重" in topic:
+        return "Turnitin/AI率话题评论承接强"
+    return "留学生情绪共鸣容易触发评论"
 
 
 def _hotspot_section(items: list[dict]) -> list[str]:
@@ -386,6 +620,106 @@ def _hotspot_section(items: list[dict]) -> list[str]:
         reason = _table_cell(item.get("reason") or "可作为当月选题参考。", 48)
         lines.append(f"|{index}|{keyword}|{title}|{int(item.get('likes') or 0)}|{reason}|")
     return lines
+
+
+def _must_write_section(notes, hotspots: list[dict]) -> list[str]:
+    lines = [
+        "",
+        "## 今日必须写的3篇内容",
+        "",
+        "|优先级|选题|标题方向|内容结构|转化动作|",
+        "|---:|---|---|---|---|",
+    ]
+    topics = _recommended_topics(notes, hotspots)
+    for index, topic in enumerate(topics[:3], start=1):
+        lines.append(
+            f"|{index}|{topic}|{_must_write_title(topic)}|{_must_write_structure(topic)}|评论区置顶一个具体问题，引导用户说出学校/课程/DDL。|"
+        )
+    return lines
+
+
+def _recommended_topics(notes, hotspots: list[dict]) -> list[str]:
+    topics = []
+    for item in hotspots:
+        keyword = item.get("keyword") or ""
+        title = item.get("title") or ""
+        topics.append(_topic_from_text(keyword + title))
+    for row in sorted(notes, key=_viral_score, reverse=True):
+        topics.append(_topic_from_text((row["title"] or "") + (row["body"] or "")))
+    topics.extend(["英国毕业论文伦理表避坑", "澳洲挂科申诉补救流程", "美国暑课高压赶 due 自救"])
+
+    unique = []
+    for topic in topics:
+        if topic and topic not in unique:
+            unique.append(topic)
+    return unique[:3]
+
+
+def _topic_from_text(text: str) -> str:
+    lower = text.lower()
+    if any(word in lower for word in ("ethics", "dissertation", "proposal", "论文", "导师", "毕论")):
+        return "英国毕业论文/Proposal 推进卡点"
+    if any(word in lower for word in ("appeal", "挂科", "出分", "申诉")):
+        return "澳洲出分后挂科申诉补救"
+    if any(word in lower for word in ("summer", "暑课", "quiz", "exam", "final", "due")):
+        return "美国暑课/考试周高压自救"
+    if any(word in lower for word in ("turnitin", "ai", "查重", "降ai")):
+        return "留学生 Turnitin/AI 查重焦虑"
+    return "留学生课业压力真实共鸣"
+
+
+def _must_write_title(topic: str) -> str:
+    if "毕业论文" in topic:
+        return "标题公式：地区/人群 + 卡住的环节 + 3步自救清单"
+    if "挂科" in topic:
+        return "标题公式：出分后情绪 + 48小时补救动作 + 避坑提醒"
+    if "暑课" in topic or "考试" in topic:
+        return "标题公式：高压场景 + 时间节点 + 可执行计划"
+    if "查重" in topic:
+        return "标题公式：真实翻车场景 + 原因解释 + 修改方法"
+    return "标题公式：真实吐槽 + 具体场景 + 评论区提问"
+
+
+def _must_write_structure(topic: str) -> str:
+    if "毕业论文" in topic:
+        return "开头说卡点；中段列材料/时间线/导师沟通；结尾问进度。"
+    if "挂科" in topic:
+        return "开头安抚情绪；中段列申诉条件和材料；结尾问分数和课程。"
+    if "暑课" in topic or "考试" in topic:
+        return "开头给倒计时；中段拆复习优先级；结尾收集DDL。"
+    if "查重" in topic:
+        return "开头讲结果反差；中段拆原因；结尾给检查清单。"
+    return "开头共鸣；中段给具体经历；结尾用问题引导评论。"
+
+
+def _title_formula_from_row(row) -> str:
+    text = (row["title"] or "") + (row["body"] or "")
+    topic = _topic_from_text(text)
+    if row["comments"] > 0:
+        return f"{topic} + 争议/提问 + 评论区承接"
+    if row["collects"] >= row["likes"] and row["collects"] > 0:
+        return f"{topic} + 清单/步骤 + 收藏价值"
+    return f"{topic} + 情绪痛点 + 具体场景"
+
+
+def _structure_abstract(row) -> str:
+    text = (row["title"] or "") + (row["body"] or "")
+    if any(word in text for word in ("清单", "步骤", "方法", "攻略", "Checklist")):
+        return "问题抛出 → 步骤清单 → 适用人群 → 评论区承接"
+    if any(word in text for word in ("求推荐", "怎么办", "哪", "吗", "?")):
+        return "真实提问 → 场景补充 → 引发同类人评论 → 收集需求"
+    return "情绪共鸣 → 具体案例 → 经验总结 → 引导留言"
+
+
+def _reuse_template(row) -> str:
+    text = (row["title"] or "") + (row["body"] or "")
+    if any(word in text for word in ("论文", "dissertation", "proposal", "导师", "Ethics")):
+        return "同系列：论文进度、导师沟通、伦理表、数据分析各拆1篇。"
+    if any(word in text for word in ("挂科", "出分", "appeal", "申诉")):
+        return "同系列：出分焦虑、申诉材料、补考规划、S2选课。"
+    if any(word in text for word in ("Turnitin", "turnitin", "AI", "ai", "查重")):
+        return "同系列：查重误区、降AI前后对比、改写检查清单。"
+    return "同系列：保留同一情绪钩子，换学校/课程/DDL场景复刻。"
 
 
 def _viral_content_reason(row) -> str:
@@ -472,15 +806,16 @@ def _html_page(body: str) -> str:
       --rose: #e94f73;
       --teal: #1f8a84;
       --amber: #f6b44b;
+      --navy: #213047;
+      --mint: #e9f7f4;
+      --gold: #fff7e8;
     }}
     * {{ box-sizing: border-box; }}
     body {{
       margin: 0;
       color: var(--ink);
       background:
-        radial-gradient(circle at 18% 0%, rgba(233,79,115,.10), transparent 30%),
-        radial-gradient(circle at 92% 8%, rgba(31,138,132,.11), transparent 28%),
-        #eef3f7;
+        linear-gradient(180deg, #f1f5f7 0%, #eef3f7 42%, #f7f4f0 100%);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
       line-height: 1.62;
     }}
@@ -497,14 +832,15 @@ def _html_page(body: str) -> str:
       margin: -34px -38px 28px;
       padding: 34px 38px 30px;
       color: #fff;
-      background: linear-gradient(135deg, #df4668 0%, #1f8a84 100%);
+      background:
+        linear-gradient(135deg, rgba(223,70,104,.96) 0%, rgba(31,138,132,.92) 52%, rgba(33,48,71,.96) 100%);
       font-size: 30px;
       line-height: 1.2;
       letter-spacing: 0;
       border-radius: 18px 18px 0 0;
     }}
     h1::after {{
-      content: "Red Me Kill · Daily Operations Report";
+      content: "XHS Operations Report · Focus on content, account and next actions";
       display: block;
       margin-top: 10px;
       font-size: 13px;
@@ -512,11 +848,21 @@ def _html_page(body: str) -> str:
       color: rgba(255,255,255,.82);
     }}
     h2 {{
-      margin: 34px 0 14px;
-      padding-left: 12px;
-      border-left: 4px solid var(--rose);
+      margin: 38px 0 14px;
+      padding: 10px 14px;
+      border-left: 5px solid var(--rose);
+      border-radius: 0 10px 10px 0;
+      background: linear-gradient(90deg, #fff0f4, rgba(255,255,255,0));
       font-size: 20px;
       line-height: 1.35;
+    }}
+    h2:nth-of-type(3n) {{
+      border-left-color: var(--teal);
+      background: linear-gradient(90deg, #edf8f6, rgba(255,255,255,0));
+    }}
+    h2:nth-of-type(3n + 1) {{
+      border-left-color: var(--amber);
+      background: linear-gradient(90deg, #fff7e8, rgba(255,255,255,0));
     }}
     h3 {{ margin: 24px 0 10px; font-size: 16px; }}
     p, li {{ color: #354052; }}
@@ -532,11 +878,16 @@ def _html_page(body: str) -> str:
       min-height: 78px;
       padding: 16px 18px;
       border: 1px solid var(--line);
-      border-radius: 14px;
+      border-radius: 10px;
       background: linear-gradient(180deg, #fff, #fbfcfe);
       box-shadow: 0 10px 24px rgba(24,33,47,.05);
       color: var(--muted);
       font-size: 14px;
+    }}
+    ul:first-of-type li::first-line {{
+      color: var(--ink);
+      font-weight: 750;
+      font-size: 20px;
     }}
     ul:first-of-type li strong, ul:first-of-type li::marker {{ color: var(--rose); }}
     table {{
@@ -550,6 +901,18 @@ def _html_page(body: str) -> str:
       background: var(--paper);
       font-size: 13px;
       box-shadow: 0 10px 26px rgba(24,33,47,.04);
+    }}
+    table:nth-of-type(1) {{
+      border-color: rgba(233,79,115,.24);
+      box-shadow: 0 14px 30px rgba(233,79,115,.08);
+    }}
+    table:nth-of-type(2), table:nth-of-type(5) {{
+      border-color: rgba(31,138,132,.24);
+      box-shadow: 0 14px 30px rgba(31,138,132,.08);
+    }}
+    table:nth-of-type(3), table:nth-of-type(4) {{
+      border-color: rgba(246,180,75,.35);
+      box-shadow: 0 14px 30px rgba(246,180,75,.10);
     }}
     th, td {{
       padding: 11px 12px;
@@ -565,6 +928,24 @@ def _html_page(body: str) -> str:
       background: #fff0f4;
       font-weight: 700;
       white-space: nowrap;
+    }}
+    table:nth-of-type(2) th, table:nth-of-type(5) th {{
+      color: #155f5b;
+      background: var(--mint);
+    }}
+    table:nth-of-type(3) th, table:nth-of-type(4) th {{
+      color: #7a4a0c;
+      background: var(--gold);
+    }}
+    table:nth-of-type(1) tbody tr:first-child td {{
+      background: #fff6f8;
+      color: #7c2440;
+      font-weight: 700;
+    }}
+    table:nth-of-type(3) tbody tr:first-child td,
+    table:nth-of-type(4) tbody tr:first-child td {{
+      background: #fffaf0;
+      font-weight: 700;
     }}
     tbody tr:nth-child(even) td {{ background: #fbfdff; }}
     tbody tr:hover td {{ background: #f6fbfb; }}
@@ -689,7 +1070,7 @@ def _pdf_table(table_lines: list[str], style: ParagraphStyle, font_name: str) ->
         cells = [cell.strip() for cell in raw.strip("|").split("|")]
         if cells and all(set(cell) <= {"-", ":"} for cell in cells):
             continue
-        rows.append([Paragraph(_escape_pdf_text(cell), style) for cell in cells])
+        rows.append([Paragraph(_escape_pdf_text(_pdf_display_text(cell)), style) for cell in cells])
     usable_width = A4[0] - 28 * mm
     col_count = len(rows[0]) if rows else 1
     col_widths = _pdf_col_widths(col_count, usable_width)
@@ -736,7 +1117,7 @@ def _pdf_page_footer(canvas, doc) -> None:
     canvas.drawString(14 * mm, height - 8.8 * mm, "Red Me Kill")
     canvas.setFont("Helvetica", 7)
     canvas.setFillColor(colors.HexColor("#d9e7e6"))
-    canvas.drawRightString(width - 14 * mm, height - 8.8 * mm, "XHS Daily Operations Report")
+    canvas.drawRightString(width - 14 * mm, height - 8.8 * mm, "XHS Operations Report")
     canvas.setStrokeColor(colors.HexColor("#eadde4"))
     canvas.setLineWidth(0.6)
     canvas.line(14 * mm, 12 * mm, width - 14 * mm, 12 * mm)
@@ -768,8 +1149,21 @@ def _register_pdf_font() -> str:
 
 
 def _escape_pdf_text(text: str) -> str:
+    cleaned = _strip_pdf_unsupported(text)
     return (
-        text.replace("&", "&amp;")
+        cleaned.replace("&", "&amp;")
         .replace("<", "&lt;")
         .replace(">", "&gt;")
+    )
+
+
+def _pdf_display_text(text: str) -> str:
+    return re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+
+
+def _strip_pdf_unsupported(text: str) -> str:
+    return "".join(
+        char
+        for char in text
+        if ord(char) <= 0xFFFF and char not in {"\ufe0f", "\u200d"}
     )

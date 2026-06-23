@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import mimetypes
 from pathlib import Path
 
 import httpx
@@ -43,10 +44,11 @@ class WeComClient:
         if not self.enabled():
             return
         upload_url = self.settings.webhook_url.replace("/send?", "/upload_media?") + "&type=file"
+        mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
         with file_path.open("rb") as f:
             response = httpx.post(
                 upload_url,
-                files={"media": (file_path.name, f, "application/pdf")},
+                files={"media": (file_path.name, f, mime_type)},
                 timeout=60,
             )
         response.raise_for_status()

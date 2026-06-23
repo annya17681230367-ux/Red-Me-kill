@@ -70,6 +70,16 @@ class LlmSettings(BaseModel):
     temperature: float = 0.3
 
 
+class ImageGenerationSettings(BaseModel):
+    enabled: bool = False
+    provider: str = "openai_compatible"
+    base_url: str = ""
+    api_key: str = ""
+    model: str = ""
+    output_dir: str = "data/generated_images"
+    timeout_seconds: int = 90
+
+
 class XhsApiSettings(BaseModel):
     base_url: str = ""
     api_key: str = ""
@@ -95,6 +105,7 @@ class Settings(BaseModel):
     wecom: WeComSettings = Field(default_factory=WeComSettings)
     wechat_official_account: WeChatOfficialAccountSettings = Field(default_factory=WeChatOfficialAccountSettings)
     llm: LlmSettings = Field(default_factory=LlmSettings)
+    image_generation: ImageGenerationSettings = Field(default_factory=ImageGenerationSettings)
     xhs_api: XhsApiSettings = Field(default_factory=XhsApiSettings)
     report: ReportSettings = Field(default_factory=ReportSettings)
 
