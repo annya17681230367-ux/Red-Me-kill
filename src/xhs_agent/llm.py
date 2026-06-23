@@ -19,6 +19,8 @@ class DeepSeekClient:
             return False
         if self.settings.provider == "deepseek":
             return bool(self.settings.api_key)
+        if self.settings.provider in {"anthropic", "claude"}:
+            return bool(self.settings.api_key and self.settings.model)
         if self.settings.provider == "ollama":
             return bool(self.settings.model)
         return False
@@ -30,11 +32,13 @@ class DeepSeekClient:
             payload = self._call(note, base)
             return self._merge(base, payload)
         except Exception as exc:
-            return replace(base, llm_provider="rules", llm_summary=f"DeepSeek 调用失败，已使用规则分析：{exc}")
+            return replace(base, llm_provider="rules", llm_summary=f"{self.settings.provider} 调用失败，已使用规则分析：{exc}")
 
     def _call(self, note: NoteMetrics, base: NoteAnalysis) -> dict:
         if self.settings.provider == "ollama":
             return self._call_ollama(note, base)
+        if self.settings.provider in {"anthropic", "claude"}:
+            return self._call_anthropic(note, base)
         response = httpx.post(
             f"{self.settings.base_url.rstrip('/')}/chat/completions",
             headers={
@@ -78,6 +82,31 @@ class DeepSeekClient:
         data = response.json()
         content = data.get("message", {}).get("content", "")
         return _parse_json(content)
+
+    def _call_anthropic(self, note: NoteMetrics, base: NoteAnalysis) -> dict:
+        response = httpx.post(
+            f"{self.settings.anthropic_base_url.rstrip('/')}/v1/messages",
+            headers={
+                "x-api-key": self.settings.api_key,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": self.settings.model,
+                "temperature": self.settings.temperature,
+                "max_tokens": self.settings.max_tokens,
+                "system": self._system_prompt(),
+                "messages": [
+                    {"role": "user", "content": self._user_prompt(note, base)},
+                ],
+            },
+            timeout=self.settings.timeout_seconds,
+        )
+        response.raise_for_status()
+        data = response.json()
+        content_items = data.get("content") or []
+        text = "\n".join(str(item.get("text") or "") for item in content_items if isinstance(item, dict))
+        return _parse_json(text)
 
     def _system_prompt(self) -> str:
         return (

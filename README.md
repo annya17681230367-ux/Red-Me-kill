@@ -217,6 +217,22 @@ model = "deepseek-r1:7b"
 
 本地模型不需要 DeepSeek API 余额，但需要本机持续运行 Ollama。
 
+如果云端要接 Claude，可以把模型配置改成：
+
+```toml
+[llm]
+enabled = true
+provider = "anthropic"
+anthropic_base_url = "https://api.anthropic.com"
+api_key = "Anthropic API Key"
+model = "claude-3-5-sonnet-latest"
+timeout_seconds = 45
+max_tokens = 900
+temperature = 0.3
+```
+
+Claude 适合放在爆贴深度分析、三个业务号内容生成、封面文案和图片提示词生成这些高价值节点。真实 API Key 不要提交到 GitHub，云端部署时放在服务器环境变量或私有配置文件里。
+
 ## AI 图片生成节点
 
 系统已预留“爆贴分析后继续生成封面图”的节点。先在 `config/settings.toml` 中配置：
