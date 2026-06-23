@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -62,12 +63,14 @@ class LlmSettings(BaseModel):
     provider: str = "deepseek"
     base_url: str = "https://api.deepseek.com"
     ollama_base_url: str = "http://localhost:11434"
-    anthropic_base_url: str = "https://api.deepseek.com/anthropic"
+    anthropic_base_url: str = "https://api.anthropic.com"
     api_key: str = ""
     model: str = "deepseek-v4-flash"
     timeout_seconds: int = 45
     max_tokens: int = 900
     temperature: float = 0.3
+    input_token_usd_per_million: float = 0.14
+    output_token_usd_per_million: float = 0.28
 
 
 class ImageGenerationSettings(BaseModel):
@@ -117,7 +120,31 @@ def load_settings(path: str | Path = "config/settings.toml") -> Settings:
         raise FileNotFoundError(f"缺少配置文件：{config_path}。请复制 {example} 后填写。")
     with config_path.open("rb") as f:
         data: dict[str, Any] = tomllib.load(f)
-    return Settings.model_validate(data)
+    settings = Settings.model_validate(data)
+    return _apply_env_overrides(settings)
+
+
+def _apply_env_overrides(settings: Settings) -> Settings:
+    updates = {}
+    if os.getenv("XHS_LLM_ENABLED"):
+        updates["enabled"] = os.getenv("XHS_LLM_ENABLED", "").lower() in {"1", "true", "yes", "on"}
+    if os.getenv("XHS_LLM_PROVIDER"):
+        updates["provider"] = os.environ["XHS_LLM_PROVIDER"]
+    if os.getenv("XHS_LLM_BASE_URL"):
+        updates["base_url"] = os.environ["XHS_LLM_BASE_URL"]
+    if os.getenv("XHS_LLM_ANTHROPIC_BASE_URL"):
+        updates["anthropic_base_url"] = os.environ["XHS_LLM_ANTHROPIC_BASE_URL"]
+    if os.getenv("XHS_LLM_API_KEY"):
+        updates["api_key"] = os.environ["XHS_LLM_API_KEY"]
+    if os.getenv("XHS_LLM_MODEL"):
+        updates["model"] = os.environ["XHS_LLM_MODEL"]
+    if os.getenv("XHS_LLM_INPUT_TOKEN_USD_PER_MILLION"):
+        updates["input_token_usd_per_million"] = float(os.environ["XHS_LLM_INPUT_TOKEN_USD_PER_MILLION"])
+    if os.getenv("XHS_LLM_OUTPUT_TOKEN_USD_PER_MILLION"):
+        updates["output_token_usd_per_million"] = float(os.environ["XHS_LLM_OUTPUT_TOKEN_USD_PER_MILLION"])
+    if updates:
+        settings.llm = settings.llm.model_copy(update=updates)
+    return settings
 
 
 def load_accounts(path: str | Path) -> list[Account]:

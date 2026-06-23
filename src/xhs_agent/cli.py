@@ -9,6 +9,7 @@ from .config import load_accounts, load_manual_links, load_settings, load_wechat
 from .image_generation import run_image_generation_node
 from .llm import DeepSeekClient
 from .messaging import deliver_report
+from .models import NoteMetrics
 from .repository import Repository
 from .reports import ReportBuilder
 from .scheduler import run_scheduler
@@ -33,6 +34,7 @@ def main() -> None:
             "xhs-browser-login",
             "xhs-browser-collect",
             "generate-images",
+            "model-test",
         ],
     )
     parser.add_argument("--config", default="config/settings.toml")
@@ -86,6 +88,10 @@ def main() -> None:
             f"生成成功 {result.completed_jobs} 个，"
             f"失败 {result.failed_jobs} 个"
         )
+        return
+
+    if args.command == "model-test":
+        _test_model(repo, settings)
         return
 
     if args.command in {"daily", "weekly"}:
@@ -149,6 +155,82 @@ def _build_report(repo: Repository, settings, kind: str, report_date: str | None
     if kind == "daily":
         return builder.build_daily(day)
     return builder.build_weekly(day)
+
+
+def _test_model(repo: Repository, settings) -> None:
+    knowledge_path = Path(settings.agent.knowledge_file)
+    knowledge = knowledge_path.read_text(encoding="utf-8") if knowledge_path.exists() else ""
+    client = DeepSeekClient(settings.llm, knowledge)
+    if not client.enabled():
+        print("云端模型未启用或缺少 API Key。请配置 [llm] 或设置 XHS_LLM_API_KEY。")
+        return
+    note = NoteMetrics(
+        note_id="demo-model-test",
+        url="https://www.xiaohongshu.com/explore/demo-model-test",
+        account_id="student-demo",
+        title="英国 dissertation proposal 卡住了怎么办？",
+        body="导师一直不回，ethics 表也不知道怎么填，DDL 又很近。想做一篇给留学生看的小红书内容。",
+        published_at=None,
+        likes=120,
+        collects=80,
+        comments=18,
+        shares=6,
+        views=3000,
+        leads=3,
+    )
+    base = XhsAnalyzer(knowledge).analyze_note(note)
+    try:
+        enriched = client.enrich_note_analysis(note, base)
+    except Exception as exc:
+        repo.add_model_call_log(
+            task_type="model-test",
+            provider=settings.llm.provider,
+            model=settings.llm.model,
+            input_tokens=0,
+            output_tokens=0,
+            total_tokens=0,
+            estimated_cost_usd=0,
+            status="failed",
+            error=str(exc),
+        )
+        raise
+    usage = client.last_usage
+    if usage:
+        repo.add_model_call_log(
+            task_type="model-test",
+            provider=str(usage.get("provider") or settings.llm.provider),
+            model=str(usage.get("model") or settings.llm.model),
+            input_tokens=int(usage.get("input_tokens") or 0),
+            output_tokens=int(usage.get("output_tokens") or 0),
+            total_tokens=int(usage.get("total_tokens") or 0),
+            estimated_cost_usd=client.estimated_last_cost_usd(),
+            status="succeeded",
+        )
+    else:
+        repo.add_model_call_log(
+            task_type="model-test",
+            provider=settings.llm.provider,
+            model=settings.llm.model,
+            input_tokens=0,
+            output_tokens=0,
+            total_tokens=0,
+            estimated_cost_usd=0,
+            status="failed",
+            error=enriched.llm_summary or "模型未返回 usage，可能已回退到规则分析。",
+        )
+    print(f"云端模型：{enriched.llm_provider}")
+    if client.last_usage:
+        print(
+            "Token 用量："
+            f"输入 {client.last_usage.get('input_tokens', 0)}，"
+            f"输出 {client.last_usage.get('output_tokens', 0)}，"
+            f"合计 {client.last_usage.get('total_tokens', 0)}"
+        )
+        print(f"预估费用：${client.estimated_last_cost_usd():.6f}")
+    print(f"模型总结：{enriched.llm_summary or '模型已返回结构化结果。'}")
+    print("建议动作：")
+    for action in enriched.actions[:3]:
+        print(f"- {action}")
 
 
 if __name__ == "__main__":

@@ -44,6 +44,20 @@ model = "deepseek-v4-flash"
 timeout_seconds = 45
 max_tokens = 900
 temperature = 0.3
+input_token_usd_per_million = 0.14
+output_token_usd_per_million = 0.28
+
+# 长期主模型建议：
+# provider = "deepseek"
+# base_url = "https://api.deepseek.com"
+# model = "deepseek-v4-flash"
+# input_token_usd_per_million = 0.14
+# output_token_usd_per_million = 0.28
+#
+# 复杂策略备用模型：
+# model = "deepseek-v4-pro"
+# input_token_usd_per_million = 0.435
+# output_token_usd_per_million = 0.87
 
 [image_generation]
 enabled = false

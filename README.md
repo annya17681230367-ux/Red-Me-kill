@@ -233,6 +233,42 @@ temperature = 0.3
 
 Claude 适合放在爆贴深度分析、三个业务号内容生成、封面文案和图片提示词生成这些高价值节点。真实 API Key 不要提交到 GitHub，云端部署时放在服务器环境变量或私有配置文件里。
 
+长期运行建议先使用 DeepSeek 作为主分析模型。DeepSeek 的接口兼容 `/chat/completions`，适合批量做爆贴分析、标题优化、正文结构建议和评论区承接建议：
+
+```toml
+[llm]
+enabled = true
+provider = "deepseek"
+base_url = "https://api.deepseek.com"
+api_key = "DeepSeek API Key"
+model = "deepseek-v4-flash"
+timeout_seconds = 45
+max_tokens = 900
+temperature = 0.3
+input_token_usd_per_million = 0.14
+output_token_usd_per_million = 0.28
+```
+
+也可以在云服务器上用环境变量覆盖配置：
+
+```bash
+export XHS_LLM_ENABLED=true
+export XHS_LLM_PROVIDER=deepseek
+export XHS_LLM_BASE_URL=https://api.deepseek.com
+export XHS_LLM_API_KEY=你的DeepSeekKey
+export XHS_LLM_MODEL=deepseek-v4-flash
+export XHS_LLM_INPUT_TOKEN_USD_PER_MILLION=0.14
+export XHS_LLM_OUTPUT_TOKEN_USD_PER_MILLION=0.28
+```
+
+配置后可以先跑云端模型连通性测试：
+
+```bash
+scripts/xhs-agent.sh model-test
+```
+
+后续如果要把 Claude 作为 skill 节点插入，可以只改对应节点的模型配置，不影响 DeepSeek 主分析链路。
+
 ## AI 图片生成节点
 
 系统已预留“爆贴分析后继续生成封面图”的节点。先在 `config/settings.toml` 中配置：

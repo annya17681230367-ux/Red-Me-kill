@@ -110,6 +110,23 @@ class Repository:
 
             create index if not exists idx_image_jobs_status
               on image_jobs(status, created_at);
+
+            create table if not exists model_call_logs (
+              log_id integer primary key autoincrement,
+              task_type text not null,
+              provider text not null,
+              model text not null,
+              input_tokens integer not null default 0,
+              output_tokens integer not null default 0,
+              total_tokens integer not null default 0,
+              estimated_cost_usd real not null default 0,
+              status text not null,
+              error text,
+              created_at text not null
+            );
+
+            create index if not exists idx_model_call_logs_created_at
+              on model_call_logs(created_at);
             """
         )
         self.conn.commit()
@@ -369,6 +386,42 @@ class Repository:
             where job_id = ?
             """,
             (now, job_id),
+        )
+        self.conn.commit()
+
+    def add_model_call_log(
+        self,
+        task_type: str,
+        provider: str,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        total_tokens: int,
+        estimated_cost_usd: float,
+        status: str,
+        error: str = "",
+    ) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        self.conn.execute(
+            """
+            insert into model_call_logs(
+              task_type, provider, model, input_tokens, output_tokens,
+              total_tokens, estimated_cost_usd, status, error, created_at
+            )
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                task_type,
+                provider,
+                model,
+                input_tokens,
+                output_tokens,
+                total_tokens,
+                estimated_cost_usd,
+                status,
+                error[:1000],
+                now,
+            ),
         )
         self.conn.commit()
 

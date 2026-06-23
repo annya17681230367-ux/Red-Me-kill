@@ -13,11 +13,12 @@ class DeepSeekClient:
     def __init__(self, settings: LlmSettings, knowledge: str = ""):
         self.settings = settings
         self.knowledge = knowledge
+        self.last_usage: dict[str, int | float | str] = {}
 
     def enabled(self) -> bool:
         if not self.settings.enabled:
             return False
-        if self.settings.provider == "deepseek":
+        if self.settings.provider in {"deepseek", "openai", "openai_compatible"}:
             return bool(self.settings.api_key)
         if self.settings.provider in {"anthropic", "claude"}:
             return bool(self.settings.api_key and self.settings.model)
@@ -58,6 +59,7 @@ class DeepSeekClient:
         )
         response.raise_for_status()
         data = response.json()
+        self._record_openai_usage(data)
         content = data["choices"][0]["message"]["content"]
         return _parse_json(content)
 
@@ -80,6 +82,7 @@ class DeepSeekClient:
         )
         response.raise_for_status()
         data = response.json()
+        self._record_ollama_usage(data)
         content = data.get("message", {}).get("content", "")
         return _parse_json(content)
 
@@ -104,9 +107,52 @@ class DeepSeekClient:
         )
         response.raise_for_status()
         data = response.json()
+        self._record_anthropic_usage(data)
         content_items = data.get("content") or []
         text = "\n".join(str(item.get("text") or "") for item in content_items if isinstance(item, dict))
         return _parse_json(text)
+
+    def estimated_last_cost_usd(self) -> float:
+        input_tokens = int(self.last_usage.get("input_tokens") or 0)
+        output_tokens = int(self.last_usage.get("output_tokens") or 0)
+        return round(
+            input_tokens * self.settings.input_token_usd_per_million / 1_000_000
+            + output_tokens * self.settings.output_token_usd_per_million / 1_000_000,
+            6,
+        )
+
+    def _record_openai_usage(self, data: dict) -> None:
+        usage = data.get("usage") or {}
+        self.last_usage = {
+            "provider": self.settings.provider,
+            "model": self.settings.model,
+            "input_tokens": int(usage.get("prompt_tokens") or 0),
+            "output_tokens": int(usage.get("completion_tokens") or 0),
+            "total_tokens": int(usage.get("total_tokens") or 0),
+        }
+
+    def _record_anthropic_usage(self, data: dict) -> None:
+        usage = data.get("usage") or {}
+        input_tokens = int(usage.get("input_tokens") or 0)
+        output_tokens = int(usage.get("output_tokens") or 0)
+        self.last_usage = {
+            "provider": self.settings.provider,
+            "model": self.settings.model,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+        }
+
+    def _record_ollama_usage(self, data: dict) -> None:
+        input_tokens = int(data.get("prompt_eval_count") or 0)
+        output_tokens = int(data.get("eval_count") or 0)
+        self.last_usage = {
+            "provider": self.settings.provider,
+            "model": self.settings.model,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+        }
 
     def _system_prompt(self) -> str:
         return (
