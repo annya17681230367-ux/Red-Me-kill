@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .analysis import XhsAnalyzer
 from .config import load_accounts, load_manual_links, load_settings, load_wechat_transcript_links
+from .dashboard import run_dashboard
 from .image_generation import run_image_generation_node
 from .llm import DeepSeekClient
 from .messaging import deliver_report
@@ -35,6 +36,8 @@ def main() -> None:
             "xhs-browser-collect",
             "generate-images",
             "model-test",
+            "seed-demo",
+            "dashboard",
         ],
     )
     parser.add_argument("--config", default="config/settings.toml")
@@ -47,6 +50,8 @@ def main() -> None:
     parser.add_argument("--date", default=None, help="报告日期，格式 YYYY-MM-DD")
     parser.add_argument("--yesterday", action="store_true", help="生成昨天日期的日报/周报")
     parser.add_argument("--refresh-all", action="store_true", help="浏览器采集时刷新所有链接，默认只采未抓取链接")
+    parser.add_argument("--host", default="0.0.0.0", help="看板监听地址")
+    parser.add_argument("--port", type=int, default=8000, help="看板端口")
     args = parser.parse_args()
 
     settings = load_settings(args.config)
@@ -92,6 +97,14 @@ def main() -> None:
 
     if args.command == "model-test":
         _test_model(repo, settings)
+        return
+
+    if args.command == "seed-demo":
+        _seed_demo(repo, settings)
+        return
+
+    if args.command == "dashboard":
+        run_dashboard(repo, settings, host=args.host, port=args.port)
         return
 
     if args.command in {"daily", "weekly"}:
@@ -238,6 +251,74 @@ def _test_model(repo: Repository, settings) -> None:
     print("建议动作：")
     for action in enriched.actions[:3]:
         print(f"- {action}")
+
+
+def _seed_demo(repo: Repository, settings) -> None:
+    now = datetime.now()
+    notes = [
+        NoteMetrics(
+            note_id="demo-dissertation-proposal",
+            url="https://www.xiaohongshu.com/explore/demo-dissertation-proposal",
+            account_id="student-demo",
+            title="英国 dissertation proposal 卡住了怎么办？导师一直不回的 3 步自救",
+            body=(
+                "留学生写 proposal 最容易卡在 research question、ethics 和导师反馈。"
+                "这类内容适合拆成问题诊断、邮件模板、时间线和避坑清单，评论区承接具体专业和 DDL。"
+            ),
+            published_at=now,
+            likes=420,
+            collects=310,
+            comments=66,
+            shares=28,
+            views=8200,
+            leads=12,
+        ),
+        NoteMetrics(
+            note_id="demo-turnitin-ai-rate",
+            url="https://www.xiaohongshu.com/explore/demo-turnitin-ai-rate",
+            account_id="student-demo",
+            title="Turnitin AI 率突然很高？先别重写，先检查这 4 个地方",
+            body=(
+                "爆点来自查重和 AI 率焦虑。正文要先安抚，再给检查清单：引用格式、段落重复、"
+                "模板句、参考文献。私信承接可以用截图初筛。"
+            ),
+            published_at=now,
+            likes=260,
+            collects=188,
+            comments=43,
+            shares=19,
+            views=6100,
+            leads=9,
+        ),
+        NoteMetrics(
+            note_id="demo-fail-appeal",
+            url="https://www.xiaohongshu.com/explore/demo-fail-appeal",
+            account_id="student-demo",
+            title="英国挂科 appeal 不是写惨，证据链才是关键",
+            body=(
+                "申诉内容的转化点是紧急、具体、结果导向。适合用案例结构：时间线、证据、学校规则、"
+                "邮件措辞。封面突出“不要只写情绪”。"
+            ),
+            published_at=now,
+            likes=190,
+            collects=142,
+            comments=31,
+            shares=13,
+            views=4800,
+            leads=7,
+        ),
+    ]
+    repo.upsert_note_metrics(notes)
+    report = _build_report(repo, settings, "daily", now.date().isoformat())
+    image_result = run_image_generation_node(repo, settings.image_generation, limit=3)
+    print(f"演示数据已写入：{len(notes)} 条爆贴样例")
+    print(f"日报已生成：{report.html_path.resolve()}")
+    print(
+        "图片任务已生成："
+        f"新增 {image_result.created_jobs} 个，"
+        f"成功 {image_result.completed_jobs} 个，"
+        f"失败 {image_result.failed_jobs} 个"
+    )
 
 
 if __name__ == "__main__":

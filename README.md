@@ -203,6 +203,45 @@ data/xhs_agent.sqlite3
 
 日报和周报会按日/周输出爆贴榜。爆贴分按点赞、收藏、评论、分享和私信线索加权计算。
 
+## 云端看板和社媒助手接口
+
+云端部署后会额外启动一个看板服务：
+
+```text
+http://服务器公网 IP:8000
+```
+
+看板会展示爆贴数据、日报/周报文件、模型 Token 和费用、图片任务、生成图片记录，以及 Claude Skill 节点状态。
+
+路演前可以先写入演示数据：
+
+```bash
+docker compose run --rm xhs-agent python -m xhs_agent seed-demo
+docker compose up -d --build
+```
+
+社媒助手后续可以把小红书链接提交到这个接口：
+
+```http
+POST /api/social-links
+Content-Type: application/json
+```
+
+```json
+{
+  "url": "https://www.xiaohongshu.com/explore/xxx",
+  "sender_name": "social-assistant"
+}
+```
+
+详细操作见：
+
+```text
+docs/roadshow-runbook.md
+docs/domain-dashboard-claude-plan.md
+docs/roadshow-test-feedback-template.md
+```
+
 ## 企业微信和微信
 
 企业微信建议使用群机器人 Webhook，配置 `config/settings.toml` 的 `[wecom]` 后即可随日报/周报发送。
