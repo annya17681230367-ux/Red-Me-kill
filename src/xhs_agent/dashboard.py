@@ -5,7 +5,7 @@ import json
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlparse
 
 from .models import FeishuLink
 from .repository import Repository
@@ -14,25 +14,39 @@ from .repository import Repository
 def run_dashboard(repo: Repository, settings, host: str = "0.0.0.0", port: int = 8000) -> None:
     class DashboardHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
-            if self.path.startswith("/api/status"):
+            path = urlparse(self.path).path
+            if path == "/tool/content":
+                _send_html(self, _render_content_tool(self))
+                return
+            if path == "/tool/image":
+                _send_html(self, _render_image_tool(repo, settings, self))
+                return
+            if path.startswith("/api/status"):
                 _send_json(self, _status_payload(repo, settings))
                 return
-            if self.path.startswith("/api/skills"):
+            if path.startswith("/api/skills"):
                 _send_json(self, _skills_payload(settings))
                 return
-            if self.path.startswith("/api/hotspots"):
+            if path.startswith("/api/hotspots"):
                 _send_json(self, _hotspots_payload(repo))
                 return
-            if self.path.startswith("/api/daily-report"):
+            if path.startswith("/api/daily-report"):
                 _send_json(self, _daily_report_payload(repo, settings))
                 return
-            if self.path.startswith("/health"):
+            if path.startswith("/health"):
                 _send_text(self, "ok")
                 return
             _send_html(self, _render_dashboard(repo, settings))
 
         def do_POST(self) -> None:  # noqa: N802
-            if self.path.startswith("/api/social-links"):
+            path = urlparse(self.path).path
+            if path == "/api/content-demo":
+                _send_json(self, _content_demo_payload(_read_payload(self)))
+                return
+            if path == "/api/image-demo":
+                _send_json(self, _image_demo_payload(repo, _read_payload(self)))
+                return
+            if path.startswith("/api/social-links"):
                 payload = _read_payload(self)
                 url = str(payload.get("url") or "").strip()
                 sender_name = str(payload.get("sender_name") or "social-assistant").strip()
@@ -137,6 +151,68 @@ def _daily_report_payload(repo: Repository, settings) -> dict:
     }
 
 
+def _content_demo_payload(payload: dict) -> dict:
+    topic = str(payload.get("topic") or "Turnitin AI 率突然升高").strip()
+    account = str(payload.get("account") or "案例/转化业务号").strip()
+    calendar = str(payload.get("calendar") or "7月初稿查重期").strip()
+    title = _generated_title(topic)
+    return {
+        "ok": True,
+        "input": {"topic": topic, "account": account, "calendar": calendar},
+        "output": {
+            "title": title,
+            "cover_title": title.replace("，", "\n"),
+            "opening": f"如果你最近也卡在「{topic}」，先别急着全盘重做，最重要的是先判断问题属于哪一类。",
+            "structure": ["痛点共鸣", "3-4 步检查清单", "避坑提醒", "评论/私信承接"],
+            "body": (
+                f"适配账号：{account}\n"
+                f"营销节点：{calendar}\n"
+                "正文建议：先安抚焦虑，再给出可执行步骤；每一步都尽量让学生能自查，最后用截图/DDL/学校要求承接私信。"
+            ),
+            "comment_hook": "把你的截图/DDL 发来，我帮你判断先处理哪一块。",
+        },
+    }
+
+
+def _image_demo_payload(repo: Repository, payload: dict) -> dict:
+    topic = str(payload.get("topic") or "Turnitin AI 率突然升高").strip()
+    account = str(payload.get("account") or "business_c").strip()
+    calendar = str(payload.get("calendar") or "7月初稿查重期").strip()
+    prompt = _image_prompt(topic, account, calendar)
+    note_id = f"web-image-demo-{int(datetime.now().timestamp())}"
+    job_id = repo.add_image_job(note_id, account, prompt)
+    return {
+        "ok": True,
+        "job_id": job_id,
+        "status": "pending",
+        "message": "图片任务已进入队列。配置图片 API Key 后，这条任务会生成真实封面图。",
+        "prompt": prompt,
+    }
+
+
+def _generated_title(topic: str) -> str:
+    text = topic.lower()
+    if "turnitin" in text or "ai" in text or "查重" in text:
+        return "AI率爆了先别重写，先查这4项"
+    if "proposal" in text or "导师" in text:
+        return "proposal 卡住？先用这3步救回来"
+    if "appeal" in text or "挂科" in text:
+        return "Appeal 不是写惨，证据链才是关键"
+    if "final" in text or "考试" in text or "暑课" in text:
+        return "final 只剩7天，先救这3类题"
+    return f"{topic}，先用这套清单拆解"
+
+
+def _image_prompt(topic: str, account: str, calendar: str) -> str:
+    return (
+        "小红书知识卡片封面，面向留学生课业服务。"
+        f"主题：{topic}。目标账号：{account}。营销节点：{calendar}。"
+        f"大标题：{_generated_title(topic)}。"
+        "画面元素：笔记本电脑、课程资料、红色风险提示、清单式步骤、干净书桌。"
+        "风格：真实、清爽、专业、有轻微小红书感，留出中文标题区域，不要夸张营销，不要侵权标志。"
+    )
+
+
 def _render_dashboard(repo: Repository, settings) -> str:
     stats = _status_payload(repo, settings)
     notes = repo.query(
@@ -237,13 +313,13 @@ def _render_dashboard(repo: Repository, settings) -> str:
     <div class="brand">XHS Ops Agent</div>
     <div class="sub">小红书数据运营系统</div>
     <nav>
-      <a class="active" href="#overview">总览</a><a href="#accounts">账号看板</a><a href="#hotspots">爆贴库</a><a href="#structure">爆贴拆解</a><a href="#reports">日报周报</a><a href="#content">内容生成</a><a href="#image">图片生成</a><a href="#skills">Skill 接口</a><a href="#social">社媒助手</a><a href="#testing">测试反馈</a>
+      <a class="active" href="#overview">总览</a><a href="#accounts">账号看板</a><a href="#hotspots">爆贴库</a><a href="#structure">爆贴拆解</a><a href="#reports">日报周报</a><a href="#content">内容生成</a><a href="/tool/content" target="_blank">打开内容工具</a><a href="#image">图片生成</a><a href="/tool/image" target="_blank">打开图片工具</a><a href="#skills">Skill 接口</a><a href="#social">社媒助手</a><a href="#testing">测试反馈</a>
     </nav>
   </aside>
   <main>
     <header class="top">
       <div><h1>小红书数据运营 Agent 看板</h1><div class="muted">云端运行 · DeepSeek 分析已接入 · Claude / 图片 / 社媒助手接口已预留</div></div>
-      <div class="status"><span class="pill ok">Cloud Running</span><span class="pill ok">{html.escape(settings.llm.provider)} / {html.escape(settings.llm.model)}</span><span class="pill warn">Claude Reserved</span><span class="pill {'ok' if settings.image_generation.enabled else 'danger'}">{'Image API Connected' if settings.image_generation.enabled else 'Image API Pending'}</span></div>
+      <div><div class="status"><span class="pill ok">Cloud Running</span><span class="pill ok">{html.escape(settings.llm.provider)} / {html.escape(settings.llm.model)}</span><span class="pill warn">Claude Reserved</span><span class="pill {'ok' if settings.image_generation.enabled else 'danger'}">{'Image API Connected' if settings.image_generation.enabled else 'Image API Pending'}</span></div><div style="margin-top:10px;text-align:right"><button type="button" onclick="navigator.clipboard.writeText(location.origin);this.textContent='已复制看板链接'">复制看板分享链接</button></div></div>
     </header>
 
     <section id="overview" class="grid4">
@@ -261,9 +337,9 @@ def _render_dashboard(repo: Repository, settings) -> str:
 
     <section id="reports" class="section"><div class="toolbar"><h2>日报/周报产出</h2><a class="btn secondary" href="/api/daily-report" target="_blank">日报接口</a></div><div class="two"><div>{_daily_report_table()}</div><div>{_report_files_table(reports)}</div></div></section>
 
-    <section id="content" class="section"><h2>内容生成节点</h2><div class="two"><div class="case"><h3>输入</h3><p>爆贴：Turnitin AI 率突然升高</p><p>账号：案例/转化业务号</p><p>营销节点：7月初稿查重期</p></div><div class="case"><h3>DeepSeek 输出</h3><p>标题：AI率爆了先别重写，先查这4项</p><p>正文：情绪安抚 → 检查清单 → 修改顺序 → 私信初筛</p><p>评论引导：发截图帮你判断先改哪一块。</p></div></div></section>
+    <section id="content" class="section"><div class="toolbar"><h2>内容生成节点</h2><a class="btn" href="/tool/content" target="_blank">打开可分享工具页</a></div><div class="two"><div class="case"><h3>输入</h3><p>爆贴：Turnitin AI 率突然升高</p><p>账号：案例/转化业务号</p><p>营销节点：7月初稿查重期</p></div><div class="case"><h3>DeepSeek 输出</h3><p>标题：AI率爆了先别重写，先查这4项</p><p>正文：情绪安抚 → 检查清单 → 修改顺序 → 私信初筛</p><p>评论引导：发截图帮你判断先改哪一块。</p></div></div></section>
 
-    <section id="image" class="section"><h2>图片生成节点</h2>{_image_node_block(settings, image_jobs)}</section>
+    <section id="image" class="section"><div class="toolbar"><h2>图片生成节点</h2><a class="btn" href="/tool/image" target="_blank">打开可分享工具页</a></div>{_image_node_block(settings, image_jobs)}</section>
 
     <section id="skills" class="section"><div class="toolbar"><h2>Skill 接口中心</h2><a class="btn secondary" href="/api/skills" target="_blank">Skill JSON</a></div><div class="grid3">{_skill_cards(settings)}</div></section>
 
@@ -272,6 +348,176 @@ def _render_dashboard(repo: Repository, settings) -> str:
     <section id="testing" class="section"><h2>测试反馈</h2><div class="empty">3 人 3 天测试记录、真实 Bug、第一次路演反馈修改记录将在这里沉淀。当前已准备模板，待测试人开始使用后填入。</div></section>
   </main>
 </div>
+</body>
+</html>"""
+
+
+def _render_content_tool(handler: BaseHTTPRequestHandler) -> str:
+    origin = html.escape(_origin(handler))
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>内容生成节点</title>
+  <style>{_tool_css()}</style>
+</head>
+<body>
+  <main class="tool">
+    <header>
+      <div><a class="back" href="/">返回看板</a><h1>内容生成节点</h1><p>选择学校、专业、服务类型和订单来源，生成可给业务号使用的小红书内容结构。</p></div>
+      <button onclick="navigator.clipboard.writeText('{origin}/tool/content');this.textContent='已复制分享链接'">复制分享链接</button>
+    </header>
+    <section class="panel two">
+      <form id="content-form" class="stack">
+        <label>订单来源
+          <select name="order_source">
+            <option>手动录入</option><option>销售系统订单池</option><option>社媒助手链接</option><option>微信聊天记录</option>
+          </select>
+        </label>
+        <label>学校
+          <select name="school">
+            <option>UCL</option><option>University of Manchester</option><option>KCL</option><option>University of Warwick</option><option>University of Sydney</option><option>Monash University</option>
+          </select>
+        </label>
+        <label>专业
+          <select name="major">
+            <option>Business / Management</option><option>Education</option><option>Computer Science</option><option>Finance</option><option>Media / Communication</option><option>Law</option>
+          </select>
+        </label>
+        <label>服务类型
+          <select name="service_type">
+            <option>Dissertation Proposal</option><option>Essay 初稿/修改</option><option>Turnitin AI 率排查</option><option>Appeal / 挂科申诉</option><option>Final / Quiz 复习规划</option>
+          </select>
+        </label>
+        <label>DDL
+          <select name="ddl">
+            <option>48小时内</option><option>3-7天</option><option>1-2周</option><option>2周以上</option>
+          </select>
+        </label>
+        <label>爆贴主题<input name="topic" value="Turnitin AI 率突然升高"></label>
+        <label>目标账号
+          <select name="account"><option>案例/转化业务号</option><option>论文/作业业务号</option><option>考试/挂科补救业务号</option></select>
+        </label>
+        <button type="submit">生成内容</button>
+      </form>
+      <div class="result" id="content-result">
+        <h2>生成结果</h2>
+        <p class="muted">点击左侧按钮后，这里会展示标题、封面文案、正文结构和私信承接。</p>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>销售系统订单池接口预留</h2>
+      <pre>POST {origin}/api/content-demo
+Content-Type: application/json
+
+{{"order_source":"销售系统订单池","school":"UCL","major":"Business / Management","service_type":"Turnitin AI 率排查","ddl":"3-7天","topic":"Turnitin AI 率突然升高","account":"案例/转化业务号"}}</pre>
+    </section>
+  </main>
+  <script>
+    document.querySelector('#content-form').addEventListener('submit', async (event) => {{
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(event.target).entries());
+      const response = await fetch('/api/content-demo', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify(data)
+      }});
+      const payload = await response.json();
+      const out = payload.output;
+      document.querySelector('#content-result').innerHTML = `
+        <h2>${{out.title}}</h2>
+        <p><b>封面标题：</b>${{out.cover_title.replaceAll('\\n', ' / ')}}</p>
+        <p><b>开头：</b>${{out.opening}}</p>
+        <p><b>正文结构：</b>${{out.structure.join(' -> ')}}</p>
+        <pre>${{out.body}}</pre>
+        <p><b>评论/私信引导：</b>${{out.comment_hook}}</p>
+      `;
+    }});
+  </script>
+</body>
+</html>"""
+
+
+def _render_image_tool(repo: Repository, settings, handler: BaseHTTPRequestHandler) -> str:
+    origin = html.escape(_origin(handler))
+    jobs = repo.query(
+        """
+        select job_id, target_account, status, provider, model, prompt
+        from image_jobs
+        order by job_id desc
+        limit 8
+        """
+    )
+    rows = "".join(_image_tool_row(row) for row in jobs) or "<tr><td colspan='4'>暂无图片任务，点击上方按钮创建一条。</td></tr>"
+    api_status = "已配置，可真实出图" if settings.image_generation.enabled else "未配置图片 Key，当前先生成 Prompt 和任务队列"
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>图片生成节点</title>
+  <style>{_tool_css()}</style>
+</head>
+<body>
+  <main class="tool">
+    <header>
+      <div><a class="back" href="/">返回看板</a><h1>图片生成节点</h1><p>选择学校、专业、服务类型和账号定位，生成封面图 Prompt，并写入图片任务队列。{html.escape(api_status)}。</p></div>
+      <button onclick="navigator.clipboard.writeText('{origin}/tool/image');this.textContent='已复制分享链接'">复制分享链接</button>
+    </header>
+    <section class="panel two">
+      <form id="image-form" class="stack">
+        <label>学校
+          <select name="school"><option>UCL</option><option>University of Manchester</option><option>KCL</option><option>University of Sydney</option></select>
+        </label>
+        <label>专业
+          <select name="major"><option>Business / Management</option><option>Education</option><option>Computer Science</option><option>Finance</option></select>
+        </label>
+        <label>服务类型
+          <select name="service_type"><option>Turnitin AI 率排查</option><option>Dissertation Proposal</option><option>Appeal / 挂科申诉</option><option>Final / Quiz 复习规划</option></select>
+        </label>
+        <label>目标账号
+          <select name="account"><option value="business_c">案例/转化业务号</option><option value="business_a">论文/作业业务号</option><option value="business_b">考试/挂科补救业务号</option></select>
+        </label>
+        <label>爆贴主题<input name="topic" value="AI率爆了先别重写，先查这4项"></label>
+        <label>营销节点<input name="calendar" value="7月初稿查重期"></label>
+        <button type="submit">生成图片任务</button>
+      </form>
+      <div class="result" id="image-result">
+        <h2>图片 Prompt</h2>
+        <p class="muted">点击左侧按钮后，会生成一条可追踪的图片任务。接入 Image API 后同一条任务会变成真实封面图。</p>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>图片任务队列</h2>
+      <table><tr><th>ID</th><th>账号</th><th>状态</th><th>Prompt</th></tr>{rows}</table>
+    </section>
+    <section class="panel">
+      <h2>图片 API 接口预留</h2>
+      <pre>POST {origin}/api/image-demo
+Content-Type: application/json
+
+{{"school":"UCL","major":"Business / Management","service_type":"Turnitin AI 率排查","topic":"AI率爆了先别重写","account":"business_c","calendar":"7月初稿查重期"}}</pre>
+    </section>
+  </main>
+  <script>
+    document.querySelector('#image-form').addEventListener('submit', async (event) => {{
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(event.target).entries());
+      const response = await fetch('/api/image-demo', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify(data)
+      }});
+      const payload = await response.json();
+      document.querySelector('#image-result').innerHTML = `
+        <h2>任务 #${{payload.job_id}} 已创建</h2>
+        <p><b>状态：</b>${{payload.status}}</p>
+        <pre>${{payload.prompt}}</pre>
+        <p class="muted">${{payload.message}}</p>
+      `;
+    }});
+  </script>
 </body>
 </html>"""
 
@@ -358,10 +604,11 @@ def _image_node_block(settings, image_jobs) -> str:
     job_table = "<table><tr><th>ID</th><th>目标账号</th><th>状态</th><th>模型</th></tr>" + (rows or "<tr><td colspan='4'>暂无真实图片任务，已保留节点模板。</td></tr>") + "</table>"
     api_status = "已配置" if settings.image_generation.enabled else "待填 Key"
     return (
-        "<div class='node'><b>Claude 图片结构</b><span class='pill warn'>预留</span><div>输入爆贴标题、账号定位、营销节点；输出封面标题、副标题、画面元素和图片 Prompt。</div></div>"
-        "<div class='node'><b>guizang 卡片 Skill</b><span class='pill warn'>预留</span><div>把内容结构渲染成小红书图文卡片、轮播图或封面模板。</div></div>"
-        f"<div class='node'><b>Image API</b><span class='pill danger'>{api_status}</span><div>配置图片 API 后，图片任务会从 Prompt 变成真实封面图。</div></div>"
-        "<div class='mono'>示例 Prompt：小红书知识卡片封面，标题“AI率爆了先别重写”，电脑查重报告、红色风险提示、4步检查清单，清爽留学生学习场景。</div>"
+        "<div class='node'><b>输入信息</b><span class='pill ok'>已补</span><div>学校、专业、服务类型、DDL/营销节点、目标账号、爆贴主题。可从手动输入、社媒助手或销售系统订单池进入。</div></div>"
+        "<div class='node'><b>Claude 图片结构</b><span class='pill warn'>预留</span><div>负责把爆贴拆成封面标题、副标题、画面元素、排版层级和图片 Prompt。等 Claude Key 就能切换启用。</div></div>"
+        "<div class='node'><b>guizang 卡片 Skill</b><span class='pill warn'>预留</span><div>负责把内容结构渲染成小红书知识卡片、轮播图或封面模板，后续接 skill 命令即可替换当前 Prompt 模板。</div></div>"
+        f"<div class='node'><b>Image API</b><span class='pill danger'>{api_status}</span><div>负责真实出图。当前先生成任务和 Prompt；填入 SiliconFlow/即梦/OpenAI 图片 Key 后，队列会生成真实封面图。</div></div>"
+        "<div class='mono'>示例 Prompt：小红书知识卡片封面，标题“AI率爆了先别重写”，学校 UCL，专业 Business，服务 Turnitin AI 率排查，电脑查重报告，红色风险提示，4步检查清单，清爽留学生学习场景。</div>"
         "<h3 style='margin-top:14px'>图片任务队列</h3>"
         + job_table
     )
@@ -437,6 +684,19 @@ def _image_job_row(row) -> str:
     )
 
 
+def _image_tool_row(row) -> str:
+    model = " / ".join(part for part in (row["provider"], row["model"]) if part) or "待配置"
+    prompt = html.escape((row["prompt"] or "")[:220])
+    return (
+        "<tr>"
+        f"<td>{row['job_id']}</td>"
+        f"<td>{html.escape(row['target_account'])}<br><span class='muted'>{html.escape(model)}</span></td>"
+        f"<td>{html.escape(row['status'])}</td>"
+        f"<td>{prompt}</td>"
+        "</tr>"
+    )
+
+
 def _generated_row(row) -> str:
     link = row["image_url"] or row["image_path"] or ""
     return (
@@ -455,6 +715,28 @@ def _claude_status(settings) -> str:
         '<p><span class="pill warn">已预留，待 Claude Key 开启</span></p>'
         '<p class="muted">当前长期主模型是 DeepSeek。Claude skill 节点已作为高级内容生成/策略节点预留，后续填入 Claude API Key 后切换 provider=anthropic 即可启用。</p>'
     )
+
+
+def _tool_css() -> str:
+    return """
+    *{box-sizing:border-box}
+    body{margin:0;background:#f5f7fb;color:#101828;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,"PingFang SC","Microsoft YaHei",sans-serif}
+    .tool{max-width:1180px;margin:0 auto;padding:28px;display:grid;gap:18px}
+    header{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}
+    h1{margin:8px 0;font-size:32px}h2{margin:0 0 12px;font-size:20px}p{line-height:1.65}.muted{color:#667085}.back{color:#344054;text-decoration:none;font-weight:700}
+    .panel{background:#fff;border:1px solid #d9e2ec;border-radius:12px;padding:18px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+    .two{display:grid;grid-template-columns:.8fr 1.2fr;gap:16px}.stack{display:grid;gap:12px}label{display:grid;gap:7px;font-weight:700}
+    input,select{height:42px;border:1px solid #cfd8e3;border-radius:8px;padding:0 12px;font-size:15px;background:white}
+    button{height:42px;border:0;border-radius:8px;padding:0 16px;background:#e94162;color:white;font-weight:800;cursor:pointer}
+    pre{white-space:pre-wrap;background:#f1f4f8;border:1px solid #d9e2ec;border-radius:8px;padding:12px;line-height:1.55}
+    table{width:100%;border-collapse:collapse}th,td{border-bottom:1px solid #d9e2ec;padding:10px;text-align:left;vertical-align:top}th{background:#f8fafc;color:#475467}
+    @media(max-width:850px){.two,header{grid-template-columns:1fr;display:grid}}
+    """
+
+
+def _origin(handler: BaseHTTPRequestHandler) -> str:
+    host = handler.headers.get("Host") or "47.86.44.159:8000"
+    return f"http://{host}"
 
 
 def _latest_files(directory: Path, patterns: tuple[str, ...], limit: int) -> list[tuple[Path, float, int]]:
