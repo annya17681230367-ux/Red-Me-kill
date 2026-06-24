@@ -146,6 +146,19 @@ def _apply_env_overrides(settings: Settings) -> Settings:
         updates["output_token_usd_per_million"] = float(os.environ["XHS_LLM_OUTPUT_TOKEN_USD_PER_MILLION"])
     if updates:
         settings.llm = settings.llm.model_copy(update=updates)
+    image_updates = {}
+    if os.getenv("XHS_IMAGE_ENABLED"):
+        image_updates["enabled"] = os.getenv("XHS_IMAGE_ENABLED", "").lower() in {"1", "true", "yes", "on"}
+    if os.getenv("XHS_IMAGE_PROVIDER"):
+        image_updates["provider"] = os.environ["XHS_IMAGE_PROVIDER"]
+    if os.getenv("XHS_IMAGE_BASE_URL"):
+        image_updates["base_url"] = os.environ["XHS_IMAGE_BASE_URL"]
+    if os.getenv("XHS_IMAGE_API_KEY"):
+        image_updates["api_key"] = os.environ["XHS_IMAGE_API_KEY"]
+    if os.getenv("XHS_IMAGE_MODEL"):
+        image_updates["model"] = os.environ["XHS_IMAGE_MODEL"]
+    if image_updates:
+        settings.image_generation = settings.image_generation.model_copy(update=image_updates)
     return settings
 
 

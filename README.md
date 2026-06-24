@@ -220,6 +220,12 @@ docker compose run --rm xhs-agent python -m xhs_agent seed-demo
 docker compose up -d --build
 ```
 
+如果云服务器安全组已开放 `80`，可以直接访问：
+
+```text
+http://服务器公网 IP
+```
+
 社媒助手后续可以把小红书链接提交到这个接口：
 
 ```http
@@ -232,6 +238,24 @@ Content-Type: application/json
   "url": "https://www.xiaohongshu.com/explore/xxx",
   "sender_name": "social-assistant"
 }
+```
+
+## 图片 API
+
+图片节点优先按 OpenAI 兼容格式调用 `/images/generations`。路演前建议先用 SiliconFlow，配置成本最低：
+
+```bash
+XHS_IMAGE_ENABLED=true
+XHS_IMAGE_PROVIDER=siliconflow
+XHS_IMAGE_BASE_URL=https://api.siliconflow.cn/v1
+XHS_IMAGE_API_KEY=你的图片APIKey
+XHS_IMAGE_MODEL=Kwai-Kolors/Kolors
+```
+
+配置后执行：
+
+```bash
+docker compose run --rm xhs-agent python -m xhs_agent generate-images --limit 3
 ```
 
 详细操作见：

@@ -63,10 +63,10 @@ output_token_usd_per_million = 0.28
 
 [image_generation]
 enabled = false
-provider = "openai_compatible"
+provider = "siliconflow"
 base_url = ""
 api_key = ""
-model = ""
+model = "Kwai-Kolors/Kolors"
 output_dir = "data/generated_images"
 timeout_seconds = 90
 

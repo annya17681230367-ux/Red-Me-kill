@@ -35,18 +35,21 @@ class ImageGenerationClient:
     def generate(self, prompt: str) -> dict:
         if not self.enabled():
             raise RuntimeError("图片生成 API 未配置，已保留任务等待后续执行。")
+        payload = {
+            "model": self.settings.model,
+            "prompt": prompt,
+        }
+        if self.settings.provider.lower() == "siliconflow":
+            payload.update({"image_size": "1024x1024", "batch_size": 1})
+        else:
+            payload.update({"size": "1024x1024", "n": 1})
         response = httpx.post(
             f"{self.settings.base_url.rstrip('/')}/images/generations",
             headers={
                 "Authorization": f"Bearer {self.settings.api_key}",
                 "Content-Type": "application/json",
             },
-            json={
-                "model": self.settings.model,
-                "prompt": prompt,
-                "size": "1024x1024",
-                "n": 1,
-            },
+            json=payload,
             timeout=self.settings.timeout_seconds,
         )
         response.raise_for_status()

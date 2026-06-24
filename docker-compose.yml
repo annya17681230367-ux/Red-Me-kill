@@ -20,5 +20,6 @@ services:
       - ./config/accounts.csv:/app/config/accounts.csv:ro
       - ./data:/app/data
     ports:
+      - "80:8000"
       - "8000:8000"
     command: ["python", "-m", "xhs_agent", "dashboard", "--host", "0.0.0.0", "--port", "8000"]
