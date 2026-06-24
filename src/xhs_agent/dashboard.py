@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import json
+import os
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -33,6 +34,9 @@ def run_dashboard(repo: Repository, settings, host: str = "0.0.0.0", port: int =
             if path.startswith("/api/daily-report"):
                 _send_json(self, _daily_report_payload(repo, settings))
                 return
+            if path.startswith("/api/review-queue"):
+                _send_json(self, _review_queue_payload(repo))
+                return
             if path.startswith("/health"):
                 _send_text(self, "ok")
                 return
@@ -40,6 +44,15 @@ def run_dashboard(repo: Repository, settings, host: str = "0.0.0.0", port: int =
 
         def do_POST(self) -> None:  # noqa: N802
             path = urlparse(self.path).path
+            if path in {"/api/orders", "/api/reviews"} and not _authorized(self):
+                _send_json(self, {"ok": False, "error": "unauthorized"}, status=401)
+                return
+            if path == "/api/orders":
+                _send_json(self, _order_intake_payload(repo, _read_payload(self)))
+                return
+            if path == "/api/reviews":
+                _send_json(self, _review_update_payload(repo, _read_payload(self)))
+                return
             if path == "/api/content-demo":
                 _send_json(self, _content_demo_payload(_read_payload(self)))
                 return
@@ -89,6 +102,8 @@ def _status_payload(repo: Repository, settings) -> dict:
         "image_jobs": _scalar(repo, "select count(*) from image_jobs"),
         "generated_images": _scalar(repo, "select count(*) from generated_images"),
         "model_calls": _scalar(repo, "select count(*) from model_call_logs"),
+        "reviews": _scalar(repo, "select count(*) from review_items"),
+        "pending_reviews": _scalar(repo, "select count(*) from review_items where status = 'pending_review'"),
         "llm_provider": settings.llm.provider,
         "llm_model": settings.llm.model,
         "claude_skill_node": "reserved" if settings.llm.provider != "anthropic" else "enabled",
@@ -149,6 +164,47 @@ def _daily_report_payload(repo: Repository, settings) -> dict:
         "latest_reports": [item[0].name for item in reports],
         "recommendation": "优先生产 proposal、Turnitin、appeal 三类高转化内容。",
     }
+
+
+def _review_queue_payload(repo: Repository) -> list[dict]:
+    rows = repo.query(
+        """
+        select review_id, source_type, source_id, title, summary, recommended_account,
+               risk_level, status, reviewer, review_comment, created_at
+        from review_items
+        order by review_id desc
+        limit 30
+        """
+    )
+    return [dict(row) for row in rows]
+
+
+def _order_intake_payload(repo: Repository, payload: dict) -> dict:
+    required = ["school", "major", "service_type", "student_pain"]
+    missing = [key for key in required if not str(payload.get(key) or "").strip()]
+    if missing:
+        return {"ok": False, "error": f"missing fields: {', '.join(missing)}"}
+    review_id = repo.add_intake_order(payload)
+    row = repo.query("select * from review_items where review_id = ?", (review_id,))[0]
+    return {
+        "ok": True,
+        "review_id": review_id,
+        "status": row["status"],
+        "risk_level": row["risk_level"],
+        "recommended_account": row["recommended_account"],
+        "summary": row["summary"],
+    }
+
+
+def _review_update_payload(repo: Repository, payload: dict) -> dict:
+    review_id = int(payload.get("review_id") or 0)
+    decision = str(payload.get("decision") or "").strip()
+    reviewer = str(payload.get("reviewer") or "reviewer").strip()
+    comment = str(payload.get("comment") or "").strip()
+    if not review_id or not decision:
+        return {"ok": False, "error": "missing review_id or decision"}
+    repo.update_review(review_id, reviewer, decision, comment)
+    return {"ok": True, "review_id": review_id, "status": decision}
 
 
 def _content_demo_payload(payload: dict) -> dict:
@@ -250,6 +306,15 @@ def _render_dashboard(repo: Repository, settings) -> str:
         limit 6
         """
     )
+    reviews = repo.query(
+        """
+        select review_id, source_type, source_id, title, summary, recommended_account,
+               risk_level, status, reviewer, review_comment, created_at
+        from review_items
+        order by review_id desc
+        limit 12
+        """
+    )
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -313,7 +378,7 @@ def _render_dashboard(repo: Repository, settings) -> str:
     <div class="brand">XHS Ops Agent</div>
     <div class="sub">小红书数据运营系统</div>
     <nav>
-      <a class="active" href="#overview">总览</a><a href="#accounts">账号看板</a><a href="#hotspots">爆贴库</a><a href="#structure">爆贴拆解</a><a href="#reports">日报周报</a><a href="#content">内容生成</a><a href="/tool/content" target="_blank">打开内容工具</a><a href="#image">图片生成</a><a href="/tool/image" target="_blank">打开图片工具</a><a href="#skills">Skill 接口</a><a href="#social">社媒助手</a><a href="#testing">测试反馈</a>
+      <a class="active" href="#overview">总览</a><a href="#accounts">账号看板</a><a href="#hotspots">爆贴库</a><a href="#structure">爆贴拆解</a><a href="#reports">日报周报</a><a href="#review">审核中心</a><a href="#content">内容生成</a><a href="/tool/content" target="_blank">打开内容工具</a><a href="#image">图片生成</a><a href="/tool/image" target="_blank">打开图片工具</a><a href="#skills">Skill 接口</a><a href="#social">社媒助手</a><a href="#testing">测试反馈</a>
     </nav>
   </aside>
   <main>
@@ -326,7 +391,7 @@ def _render_dashboard(repo: Repository, settings) -> str:
       <div class="card metric"><div class="label">爆贴数据</div><strong>{stats['notes'] or 6}</strong><div class="delta">真实数据 + 演示占位</div></div>
       <div class="card metric"><div class="label">社媒输入</div><strong>{stats['links']}</strong><div class="delta">接口已预留</div></div>
       <div class="card metric"><div class="label">图片任务</div><strong>{stats['image_jobs'] or 18}</strong><div class="delta">6 选题 × 3 账号</div></div>
-      <div class="card metric"><div class="label">模型调用</div><strong>{stats['model_calls']}</strong><div class="delta">Token 成本可追踪</div></div>
+      <div class="card metric"><div class="label">待审核</div><strong>{stats['pending_reviews']}</strong><div class="delta">订单/内容/图片审核</div></div>
     </section>
 
     <section id="accounts" class="section"><div class="toolbar"><h2>账号数据看板</h2><span class="muted">后续接真实账号 API 后自动更新</span></div>{_account_table()}</section>
@@ -336,6 +401,8 @@ def _render_dashboard(repo: Repository, settings) -> str:
     <section id="structure" class="section"><h2>爆贴结构拆解</h2><div class="grid3">{_structure_cards()}</div></section>
 
     <section id="reports" class="section"><div class="toolbar"><h2>日报/周报产出</h2><a class="btn secondary" href="/api/daily-report" target="_blank">日报接口</a></div><div class="two"><div>{_daily_report_table()}</div><div>{_report_files_table(reports)}</div></div></section>
+
+    <section id="review" class="section"><div class="toolbar"><h2>审核中心</h2><a class="btn secondary" href="/api/review-queue" target="_blank">审核队列接口</a></div>{_review_table(reviews)}<div class="mono" style="margin-top:12px">POST /api/orders 接销售系统订单池；POST /api/reviews 写入审核结果。正式接入时建议设置 XHS_AGENT_API_TOKEN。</div></section>
 
     <section id="content" class="section"><div class="toolbar"><h2>内容生成节点</h2><a class="btn" href="/tool/content" target="_blank">打开可分享工具页</a></div><div class="two"><div class="case"><h3>输入</h3><p>爆贴：Turnitin AI 率突然升高</p><p>账号：案例/转化业务号</p><p>营销节点：7月初稿查重期</p></div><div class="case"><h3>DeepSeek 输出</h3><p>标题：AI率爆了先别重写，先查这4项</p><p>正文：情绪安抚 → 检查清单 → 修改顺序 → 私信初筛</p><p>评论引导：发截图帮你判断先改哪一块。</p></div></div></section>
 
@@ -593,6 +660,37 @@ def _daily_report_table() -> str:
     )
 
 
+def _review_table(reviews) -> str:
+    if not reviews:
+        return (
+            "<div class='empty'><b>暂无待审核数据</b><br>"
+            "销售系统或社媒助手调用 /api/orders 后，会在这里出现待审核内容。</div>"
+        )
+    rows = "".join(_review_row(row) for row in reviews)
+    return (
+        "<table><tr><th>ID</th><th>来源</th><th>分析结果</th><th>风险</th><th>推荐账号</th><th>状态</th><th>审核备注</th></tr>"
+        + rows
+        + "</table>"
+    )
+
+
+def _review_row(row) -> str:
+    status_class = "ok" if row["status"] == "approved" else "danger" if row["status"] == "rejected" else "warn"
+    risk_class = "danger" if row["risk_level"] == "high" else "warn" if row["risk_level"] == "medium" else "ok"
+    comment = row["review_comment"] or "等待人工审核"
+    return (
+        "<tr>"
+        f"<td>{row['review_id']}</td>"
+        f"<td>{html.escape(row['source_type'])}<br><span class='muted'>{html.escape(row['source_id'])}</span></td>"
+        f"<td><b>{html.escape(row['title'])}</b><br><span class='muted'>{html.escape(row['summary'])}</span></td>"
+        f"<td><span class='pill {risk_class}'>{html.escape(row['risk_level'])}</span></td>"
+        f"<td>{html.escape(row['recommended_account'] or '')}</td>"
+        f"<td><span class='pill {status_class}'>{html.escape(row['status'])}</span></td>"
+        f"<td>{html.escape(comment)}</td>"
+        "</tr>"
+    )
+
+
 def _report_files_table(reports) -> str:
     if not reports:
         return "<div class='empty'><b>历史报告占位</b><br>后续展示 daily-YYYY-MM-DD.html、weekly-YYYY-MM-DD.pdf，并支持点击下载。</div>"
@@ -737,6 +835,14 @@ def _tool_css() -> str:
 def _origin(handler: BaseHTTPRequestHandler) -> str:
     host = handler.headers.get("Host") or "47.86.44.159:8000"
     return f"http://{host}"
+
+
+def _authorized(handler: BaseHTTPRequestHandler) -> bool:
+    expected = os.getenv("XHS_AGENT_API_TOKEN", "").strip()
+    if not expected:
+        return True
+    header = handler.headers.get("Authorization") or ""
+    return header == f"Bearer {expected}"
 
 
 def _latest_files(directory: Path, patterns: tuple[str, ...], limit: int) -> list[tuple[Path, float, int]]:

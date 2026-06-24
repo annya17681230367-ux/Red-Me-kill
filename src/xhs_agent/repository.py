@@ -127,6 +127,39 @@ class Repository:
 
             create index if not exists idx_model_call_logs_created_at
               on model_call_logs(created_at);
+
+            create table if not exists intake_orders (
+              order_id text primary key,
+              source text not null,
+              school text,
+              major text,
+              service_type text,
+              ddl text,
+              student_pain text,
+              budget text,
+              sales_owner text,
+              raw_payload text,
+              created_at text not null,
+              updated_at text not null
+            );
+
+            create table if not exists review_items (
+              review_id integer primary key autoincrement,
+              source_type text not null,
+              source_id text not null,
+              title text not null,
+              summary text not null,
+              recommended_account text,
+              risk_level text not null,
+              status text not null default 'pending_review',
+              reviewer text,
+              review_comment text,
+              created_at text not null,
+              updated_at text not null
+            );
+
+            create index if not exists idx_review_items_status
+              on review_items(status, created_at);
             """
         )
         self.conn.commit()
@@ -425,5 +458,107 @@ class Repository:
         )
         self.conn.commit()
 
+    def add_intake_order(self, payload: dict) -> int:
+        now = datetime.now(timezone.utc).isoformat()
+        order_id = str(payload.get("order_id") or f"ORD-{int(datetime.now().timestamp())}")
+        self.conn.execute(
+            """
+            insert into intake_orders(
+              order_id, source, school, major, service_type, ddl,
+              student_pain, budget, sales_owner, raw_payload, created_at, updated_at
+            )
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            on conflict(order_id) do update set
+              source=excluded.source,
+              school=excluded.school,
+              major=excluded.major,
+              service_type=excluded.service_type,
+              ddl=excluded.ddl,
+              student_pain=excluded.student_pain,
+              budget=excluded.budget,
+              sales_owner=excluded.sales_owner,
+              raw_payload=excluded.raw_payload,
+              updated_at=excluded.updated_at
+            """,
+            (
+                order_id,
+                str(payload.get("source") or "sales_pool"),
+                str(payload.get("school") or ""),
+                str(payload.get("major") or ""),
+                str(payload.get("service_type") or ""),
+                str(payload.get("ddl") or ""),
+                str(payload.get("student_pain") or ""),
+                str(payload.get("budget") or ""),
+                str(payload.get("sales_owner") or ""),
+                str(payload),
+                now,
+                now,
+            ),
+        )
+        self.conn.execute("delete from review_items where source_type = 'order' and source_id = ?", (order_id,))
+        analysis = _order_review_analysis(payload)
+        cursor = self.conn.execute(
+            """
+            insert into review_items(
+              source_type, source_id, title, summary, recommended_account,
+              risk_level, status, created_at, updated_at
+            )
+            values (?, ?, ?, ?, ?, ?, 'pending_review', ?, ?)
+            """,
+            (
+                "order",
+                order_id,
+                analysis["title"],
+                analysis["summary"],
+                analysis["recommended_account"],
+                analysis["risk_level"],
+                now,
+                now,
+            ),
+        )
+        self.conn.commit()
+        return int(cursor.lastrowid)
+
+    def update_review(self, review_id: int, reviewer: str, decision: str, comment: str = "") -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        if decision not in {"approved", "rejected", "needs_edit", "pending_review"}:
+            raise ValueError("decision must be approved, rejected, needs_edit, or pending_review")
+        self.conn.execute(
+            """
+            update review_items
+            set status = ?, reviewer = ?, review_comment = ?, updated_at = ?
+            where review_id = ?
+            """,
+            (decision, reviewer, comment[:1000], now, review_id),
+        )
+        self.conn.commit()
+
     def query(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
         return self.conn.execute(sql, params).fetchall()
+
+
+def _order_review_analysis(payload: dict) -> dict:
+    service = str(payload.get("service_type") or "课业服务")
+    school = str(payload.get("school") or "未知学校")
+    major = str(payload.get("major") or "未知专业")
+    pain = str(payload.get("student_pain") or "学生需求待补充")
+    ddl = str(payload.get("ddl") or "DDL 待确认")
+    text = f"{service} {pain} {ddl}".lower()
+    if any(word in text for word in ("48", "urgent", "今晚", "明天", "挂科", "appeal")):
+        risk_level = "high"
+    elif any(word in text for word in ("3-7", "turnitin", "ai", "查重", "proposal")):
+        risk_level = "medium"
+    else:
+        risk_level = "low"
+    if any(word in text for word in ("appeal", "挂科", "final", "quiz", "考试")):
+        account = "考试/挂科补救业务号"
+    elif any(word in text for word in ("turnitin", "ai", "案例", "查重")):
+        account = "案例/转化业务号"
+    else:
+        account = "论文/作业业务号"
+    return {
+        "title": f"{school} {major}｜{service}",
+        "summary": f"痛点：{pain}；DDL：{ddl}。建议先生成小红书内容结构，再进入图片任务，最后由人工审核后使用。",
+        "recommended_account": account,
+        "risk_level": risk_level,
+    }
